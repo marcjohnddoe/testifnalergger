@@ -1,0 +1,5 @@
+{
+  "name": "BetMind AI - Sports Analyst",
+  "description": "An advanced sports analysis dashboard powered by BetMind AI. Provides deep insights, real-time search grounding, and betting probability calculations for daily matches (Ligue 1, NBA, etc).",
+  "requestFramePermissions": []
+}

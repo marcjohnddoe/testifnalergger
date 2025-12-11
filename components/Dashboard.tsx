@@ -1,0 +1,211 @@
+
+import React, { useState, useEffect } from 'react';
+import { fetchDailyMatches, analyzeMatchDeeply } from '../services/geminiService';
+import { Match, MatchAnalysis, SportType } from '../types';
+import { MatchCard } from './MatchCard';
+import { AnalysisView } from './AnalysisView';
+
+type TabType = 'All' | SportType | 'Trending' | 'Safe' | 'HighOdds' | 'Value';
+
+export const Dashboard = () => {
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [activeTab, setActiveTab] = useState<TabType>('All');
+  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
+  const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
+  
+  const [loadingMatches, setLoadingMatches] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
+
+  // Initial Load (Cache allowed)
+  useEffect(() => {
+    loadMatches(false);
+  }, [activeTab]);
+
+  const loadMatches = async (force: boolean) => {
+    setLoadingMatches(true);
+    try {
+        let category = 'All';
+        // Si on est sur un sport spécifique, on le passe pour optimiser le prompt Gemini
+        if (activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL) {
+            category = activeTab;
+        }
+        // forceRefresh est passé à fetchDailyMatches
+        const data = await fetchDailyMatches(category, force);
+        setMatches(data);
+    } catch (e) {
+        console.error(e);
+    } finally {
+        setLoadingMatches(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+      setIsRefreshing(true);
+      // Force le refresh (ignore le cache)
+      await loadMatches(true);
+      setIsRefreshing(false);
+  };
+
+  const handleMatchSelect = async (match: Match) => {
+    setSelectedMatch(match);
+    setAnalysis(null);
+    setLoadingAnalysis(true);
+    document.body.style.overflow = 'hidden';
+
+    try {
+      const result = await analyzeMatchDeeply(match);
+      setAnalysis(result);
+    } catch (err) {
+      console.error(err);
+      setAnalysis(null);
+    } finally {
+      setLoadingAnalysis(false);
+    }
+  };
+
+  // NOUVEAU: Refresh spécifiquement l'analyse (Live Update)
+  const handleAnalysisRefresh = async () => {
+      if (!selectedMatch) return;
+      setLoadingAnalysis(true); // Remet le loading à true, AnalysisView affichera l'overlay
+      try {
+          // Appel avec forceRefresh = true
+          const result = await analyzeMatchDeeply(selectedMatch, true);
+          setAnalysis(result);
+      } catch (err) {
+          console.error("Refresh failed", err);
+      } finally {
+          setLoadingAnalysis(false);
+      }
+  };
+
+  const closeAnalysis = () => {
+      setSelectedMatch(null);
+      document.body.style.overflow = 'auto';
+  };
+
+  const tabs: {id: TabType, label: string}[] = [
+    { id: 'All', label: 'Vue d\'ensemble' },
+    { id: 'Trending', label: '🔥 Top Affiches' },
+    { id: 'Safe', label: '💎 Les Sûrs' },
+    { id: 'Value', label: '🧠 Value Bets' },
+    { id: 'HighOdds', label: '🚀 Cotes Élevées' },
+    { id: SportType.FOOTBALL, label: '⚽ Football' },
+    { id: SportType.BASKETBALL, label: '🏀 NBA' },
+  ];
+
+  const filteredMatches = matches.filter(m => {
+      if (activeTab === 'Trending') return m.isTrending;
+      
+      if (activeTab === 'Safe') {
+          // Filtre Sûr : Confiance > 70%
+          return (m.quickConfidence || 0) > 70;
+      }
+      
+      if (activeTab === 'HighOdds') {
+          // Filtre Grosses Cotes : Cote > 2.50
+          return (m.quickOdds || 0) >= 2.50;
+      }
+
+      if (activeTab === 'Value') {
+          // Filtre Value : Le "Value Score" (Cote * Probabilité > 1.1)
+          // On estime la probabilité via la confiance de l'IA (ex: 80% = 0.8)
+          const prob = (m.quickConfidence || 50) / 100;
+          const valueScore = prob * (m.quickOdds || 0);
+          return valueScore > 1.1; // Seuil de "Value"
+      }
+
+      if (activeTab === SportType.FOOTBALL) return m.sport === SportType.FOOTBALL;
+      if (activeTab === SportType.BASKETBALL) return m.sport === SportType.BASKETBALL;
+      return true;
+  });
+
+  return (
+    <div className="min-h-screen w-full bg-[#050505] relative">
+      <div className="fixed top-0 left-0 w-full h-[500px] bg-gradient-to-b from-blue-900/10 to-transparent pointer-events-none"></div>
+      
+      {/* HEADER */}
+      <header className="sticky top-0 z-30 w-full backdrop-blur-xl border-b border-white/5 bg-[#050505]/80">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-white to-gray-400 text-black flex items-center justify-center font-bold text-xl shadow-[0_0_20px_rgba(255,255,255,0.15)]">B</div>
+                <div>
+                    <h1 className="text-lg font-bold tracking-tight text-white leading-none">BetMind <span className="text-white/40 font-normal">AI</span></h1>
+                    <p className="text-[10px] text-white/30 uppercase tracking-widest font-medium">Standalone Edition</p>
+                </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 md:pb-0">
+                    {tabs.map((tab) => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all duration-300 border ${activeTab === tab.id ? 'bg-white text-black border-white' : 'bg-white/5 text-white/60 border-transparent hover:bg-white/10'}`}
+                    >
+                        {tab.label}
+                    </button>
+                    ))}
+                    
+                    <button 
+                        onClick={handleRefresh}
+                        disabled={isRefreshing || loadingMatches}
+                        className={`hidden md:flex w-9 h-9 ml-2 rounded-full items-center justify-center bg-white/5 hover:bg-white/10 border border-white/5 transition-all ${isRefreshing ? 'text-green-400 bg-green-900/20' : 'text-white/40'}`}
+                    >
+                        <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+      </header>
+
+      {/* MAIN CONTENT */}
+      <main className="max-w-7xl mx-auto px-4 py-8 relative z-10">
+        {loadingMatches ? (
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                 {[1,2,3,4].map(i => <div key={i} className="h-48 rounded-3xl bg-white/5 animate-pulse border border-white/5"></div>)}
+             </div>
+        ) : filteredMatches.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="text-4xl mb-4 opacity-30">🔍</div>
+                <h3 className="text-white text-lg font-medium">Aucun match trouvé</h3>
+                <p className="text-white/40 text-sm mb-4">Essayez d'actualiser ou de changer de filtre.</p>
+                <button onClick={handleRefresh} className="px-6 py-2 bg-blue-600 rounded-full text-sm font-bold text-white hover:bg-blue-500 transition-colors">
+                    Actualiser
+                </button>
+            </div>
+        ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
+                {filteredMatches.map(match => (
+                    <MatchCard key={match.id} match={match} onClick={() => handleMatchSelect(match)} />
+                ))}
+            </div>
+        )}
+      </main>
+
+      {/* OVERLAY */}
+      {selectedMatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-4 lg:p-8">
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={closeAnalysis}></div>
+            <div className="relative w-full h-full md:h-[90vh] lg:max-w-5xl bg-[#080808] md:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col border border-white/10 animate-[slideUp_0.3s_ease-out]">
+                <div className="flex justify-between items-center p-4 border-b border-white/5 bg-[#080808]/50 backdrop-blur-md z-20">
+                    <button onClick={closeAnalysis} className="flex items-center gap-2 text-white/50 hover:text-white bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full text-sm">← Retour</button>
+                    <div className="text-xs font-bold text-white/30 uppercase tracking-widest">BetMind Analyst</div>
+                </div>
+                <div className="flex-1 overflow-y-auto pt-6 no-scrollbar">
+                    <AnalysisView 
+                        match={selectedMatch} 
+                        analysis={analysis} 
+                        loading={loadingAnalysis} 
+                        onClose={closeAnalysis}
+                        onRefresh={handleAnalysisRefresh} 
+                    />
+                </div>
+            </div>
+        </div>
+      )}
+    </div>
+  );
+};
