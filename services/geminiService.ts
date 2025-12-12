@@ -118,6 +118,7 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
       2. Si Ligue 1: Matchs du jour précis.
       3. Format Date: "${todayShort}" ou "${tomorrowShort}".
       4. Output JSON uniquement.
+      5. NE PAS utiliser de Markdown ou de code blocks. JSON brut.
 
       FORMAT JSON ATTENDU (Exemple):
       [
@@ -132,7 +133,7 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
             contents: prompt,
             config: { 
                 tools: [{ googleSearch: {} }],
-                // NOTE: responseMimeType & responseSchema are NOT supported with tools (googleSearch)
+                // IMPORTANT: responseMimeType & responseSchema DOIVENT être absents avec googleSearch
             }
         });
 
@@ -172,51 +173,61 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
 export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> => {
     const ai = getClient();
     
-    // 1. SMART DATA INSTRUCTIONS
+    // 1. SMART DATA INSTRUCTIONS (FRANÇAIS)
     let smartDataInstructions = "";
     if (match.sport === SportType.BASKETBALL) {
         smartDataInstructions = `
-        SMART DATA NBA (Use Google Search):
-        - FATIGUE: Check "Positive Residual" for "Rest Disadvantage", "B2B", or "3IN4". CRITICAL.
-        - REAL RANKING: Check "Dunk & Three" for "Schedule-Adjusted Net Rating".
-        - ABSENCES: Check "PBPStats" for WOWY (Net Rating without star player).
+        SMART DATA NBA (Recherche Google Obligatoire):
+        - FATIGUE: Chercher "NBA Rest Days", "B2B", "3IN4" pour ${match.homeTeam} et ${match.awayTeam}.
+        - ADVANCED STATS: Chercher "Net Rating", "Pace", "Offensive Rating" sur Dunk & Three.
+        - ABSENCES: Vérifier les dernières injury reports (ESPN, Twitter beat writers).
+        - COTES: Chercher "Cote match ${match.homeTeam} ${match.awayTeam} Winamax ParionsSport".
         `;
     } else {
         smartDataInstructions = `
-        SMART DATA FOOTBALL (Use Google Search):
-        - PREDICTIVE MODELS: Check "The Analyst Opta Supercomputer" prediction.
-        - REAL FORM: Check "SofaScore" last 5 matches rating.
-        - xG: Check "Understat" for xG performance vs results.
+        SMART DATA FOOTBALL (Recherche Google Obligatoire):
+        - PREDICTIVE MODELS: Chercher les prédictions "The Analyst Opta Supercomputer".
+        - REAL FORM: Chercher "SofaScore rating" sur les 5 derniers matchs.
+        - xG: Chercher les stats "Understat" xG (Expected Goals).
+        - COTES: Chercher "Cote match ${match.homeTeam} ${match.awayTeam} Winamax ParionsSport".
         `;
     }
 
     const judgePrompt = `
-        ROLE: Quantitative Sports Analyst (Hedge Fund).
+        RÔLE: Analyste Sportif Quantitatif Senior (Hedge Fund).
         MATCH: ${match.homeTeam} vs ${match.awayTeam} (${match.league}).
+        LANGUE: FRANÇAIS.
         
-        OBJECTIVE: Find mathematical EDGE using SMART DATA via Google Search.
+        OBJECTIF: Trouver un avantage mathématique et fournir 3 PRONOSTICS DISTINCTS.
         
         ${smartDataInstructions}
         
-        REQUIREMENTS:
-        1. SUMMARY: Integrate Smart Data findings clearly.
-        2. QUANT RATING: 0-100 score for Attack/Defense.
-        3. SCENARIOS: Generate exactly 2 or 3 distinct scenarios.
-        4. LIVE SCRIPT: Conditional strategy.
-        5. OUTPUT FORMAT: PURE JSON ONLY. No Markdown text.
+        RÈGLES CRITIQUES SUR LES COTES:
+        1. Tu DOIS chercher les cotes réelles actuelles sur les bookmakers français (Winamax, ParionsSport, Unibet).
+        2. INTERDICTION TOTALE D'INVENTER OU D'ESTIMER UNE COTE. 
+        3. Si tu ne trouves pas la cote exacte via Google Search, tu DOIS mettre la valeur 0. L'interface affichera "En attente". Ne mets jamais de fausse cote.
 
-        EXPECTED JSON STRUCTURE:
+        STRUCTURE DES PRONOSTICS (3 Requis):
+        1. "Main": Le pari vainqueur principal (Moneyline/1N2).
+        2. "Safety": Un pari plus sûr (Double chance, Handicap, ou Over/Under global).
+        3. "Prop": Un pari sur une performance joueur (Buteur, Points joueur, Passes).
+
+        FORMAT DE SORTIE: JSON PUR UNIQUEMENT. NE PAS AJOUTER DE TEXTE AVANT OU APRÈS.
+
+        STRUCTURE JSON ATTENDUE:
         {
             "matchId": "${match.id}",
-            "summary": "Detailed analysis text...",
+            "summary": "Analyse détaillée en français, expliquant les forces en présence, la fatigue et les enjeux...",
             "predictions": [
-                { "betType": "Winner", "selection": "Team A", "odds": 1.90, "confidence": 85, "units": 1.5, "reasoning": "...", "edge": 5.2 }
+                { "betType": "Vainqueur", "selection": "Lakers", "odds": 1.85, "confidence": 80, "units": 1, "reasoning": "...", "edge": 4.5 },
+                { "betType": "Sécurité", "selection": "Over 220.5 Points", "odds": 1.50, "confidence": 90, "units": 2, "reasoning": "...", "edge": 2.1 },
+                { "betType": "Buteur/Prop", "selection": "LeBron +25 Points", "odds": 0, "confidence": 60, "units": 0.5, "reasoning": "Cote non trouvée mais stat probable...", "edge": 0 }
             ],
-            "injuries": ["Player X (Out)"],
-            "keyFactors": ["Factor 1", "Factor 2"],
+            "injuries": ["Joueur X (Out)", "Joueur Y (Incertain)"],
+            "keyFactors": ["Facteur Clé 1", "Facteur Clé 2"],
             "scenarios": [
-                 { "condition": "Early Goal", "outcome": "Over 2.5", "likelihood": "High", "reasoning": "..." },
-                 { "condition": "0-0 at HT", "outcome": "Draw", "likelihood": "Med", "reasoning": "..." }
+                 { "condition": "But rapide", "outcome": "Over 2.5", "likelihood": "Haute", "reasoning": "..." },
+                 { "condition": "0-0 à la Mi-temps", "outcome": "Match Nul", "likelihood": "Moyenne", "reasoning": "..." }
             ],
             "advancedStats": [
                  { "label": "xG", "homeValue": "1.2", "awayValue": "0.8", "advantage": "home" }
@@ -225,11 +236,11 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
                 "homeAttack": 80, "homeDefense": 70, "awayAttack": 75, "awayDefense": 65, "tempo": 50
             },
             "liveStrategy": {
-                "triggerTime": "HT", "condition": "If losing", "action": "Lay", "targetOdds": 2.0, "rationale": "..."
+                "triggerTime": "Mi-temps", "condition": "Si mené au score", "action": "Lay", "targetOdds": 2.0, "rationale": "..."
             },
             "liveScore": "0-0",
-            "weather": "Clear",
-            "referee": "Ref Name"
+            "weather": "Clair",
+            "referee": "Nom de l'arbitre"
         }
     `;
 
@@ -239,7 +250,7 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
             contents: judgePrompt,
             config: { 
                 tools: [{ googleSearch: {} }],
-                // NOTE: responseMimeType & responseSchema are NOT supported with tools (googleSearch)
+                // IMPORTANT: responseMimeType & responseSchema DOIVENT être absents avec googleSearch
             }
         });
 
