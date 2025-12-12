@@ -3,15 +3,17 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 
 // --- KILL SWITCH SERVICE WORKER ---
-// Si un ancien Service Worker traîne (PWA), on le tue immédiatement pour éviter les erreurs de fetch.
+// Nettoyage sécurisé des anciens Service Workers
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(function(registrations) {
-    for(let registration of registrations) {
-      console.log('Service Worker trouvé et tué :', registration);
-      registration.unregister();
-    }
-  }).catch(function(err) {
-    console.log('Service Worker Unregistration failed: ', err);
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.getRegistrations().then(function(registrations) {
+      for(let registration of registrations) {
+        console.log('Service Worker nettoyé :', registration);
+        registration.unregister();
+      }
+    }).catch(function(err) {
+      console.log('Service Worker cleanup error (non-blocking): ', err);
+    });
   });
 }
 

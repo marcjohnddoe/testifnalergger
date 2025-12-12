@@ -1,4 +1,3 @@
-
 import React, { useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import html2canvas from 'html2canvas';
@@ -56,11 +55,44 @@ const ConsensusBar = ({ judgeConf, contrarianIntensity }: { judgeConf: number, c
 };
 
 const PlayerAvatar = ({ name }: { name: string }) => {
+    if (!name) return <div className="w-6 h-6 rounded-full bg-white/10" />;
     // Generate initials
     const initials = name.split(' ').map(n => n[0]).join('').substring(0,2).toUpperCase();
     return (
         <div className="w-6 h-6 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-[9px] font-bold text-white/70">
             {initials}
+        </div>
+    );
+};
+
+// --- MONTE CARLO CHART ---
+const MonteCarloChart = ({ monteCarlo }: { monteCarlo: MatchAnalysis['monteCarlo'] }) => {
+    if (!monteCarlo || !monteCarlo.distribution) return null;
+    
+    // Trouver le pic pour normaliser la hauteur des barres
+    const maxCount = Math.max(...monteCarlo.distribution.map(d => d.count));
+
+    return (
+        <div className="w-full h-32 flex items-end justify-center gap-[1px] md:gap-[2px] mt-4 relative">
+             {/* Ligne Zéro (Match Nul) */}
+             <div className="absolute top-0 bottom-0 left-1/2 w-px bg-white/20 z-10 border-l border-dashed border-white/30"></div>
+             
+             {monteCarlo.distribution.map((d, i) => {
+                 const height = (d.count / maxCount) * 100;
+                 // Couleur : Vert si Home gagne (diff > 0), Rouge si Away gagne (diff < 0)
+                 const bg = d.diff > 0 ? 'bg-emerald-500/50' : d.diff < 0 ? 'bg-red-500/50' : 'bg-white/50';
+                 return (
+                     <div 
+                        key={i} 
+                        style={{ height: `${height}%` }}
+                        className={`w-1 md:w-2 rounded-t-sm ${bg} hover:opacity-100 opacity-60 transition-all`}
+                        title={`Diff: ${d.diff} pts (${d.count} sims)`}
+                     ></div>
+                 );
+             })}
+             
+             <div className="absolute -bottom-4 left-0 text-[9px] text-red-400 font-bold">Away Win {monteCarlo.awayWinProb.toFixed(0)}%</div>
+             <div className="absolute -bottom-4 right-0 text-[9px] text-emerald-400 font-bold">Home Win {monteCarlo.homeWinProb.toFixed(0)}%</div>
         </div>
     );
 };
@@ -277,53 +309,47 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
               </div>
           </div>
 
-          {/* SIDE: MARKET & CONTRARIAN */}
+          {/* SIDE: MONTE CARLO & LIVE SCRIPT */}
           <div className="lg:col-span-2 flex flex-col gap-4">
               
-              {/* MARKET REALITY CHECK */}
-              <div className="bg-[#121212] border border-white/5 rounded-[2rem] p-6">
-                  <h3 className="text-blue-400 text-[10px] uppercase font-bold tracking-widest mb-4 flex items-center gap-2">
-                      📊 Reality Check (Trader)
-                  </h3>
-                  {analysis.marketAnalysis ? (
-                      <div className="space-y-4">
-                          <div className="flex justify-between items-center">
-                             <div className="flex flex-col">
-                                <span className="text-xs text-white/40 uppercase mb-1">Mouvement</span>
-                                <span className={`text-xs font-bold ${analysis.marketAnalysis.oddsMovement === 'Dropping' ? 'text-green-400' : 'text-white'}`}>
-                                    {analysis.marketAnalysis.oddsMovement || "Stable"}
-                                </span>
-                             </div>
-                             <Sparkline trend={analysis.marketAnalysis.oddsMovement} />
-                          </div>
-                          
-                          <div className="grid grid-cols-2 gap-2 text-center">
-                              <div className="bg-white/5 rounded p-2">
-                                  <div className="text-[9px] text-white/30 uppercase">Ouv.</div>
-                                  <div className="font-mono text-white/60">{analysis.marketAnalysis.openingOdds || '-'}</div>
-                              </div>
-                              <div className="bg-white/5 rounded p-2 border border-white/10">
-                                  <div className="text-[9px] text-white/30 uppercase">Actuel</div>
-                                  <div className="font-mono text-white font-bold">{analysis.marketAnalysis.currentOdds || '-'}</div>
-                              </div>
-                          </div>
-
-                          <div>
-                              <div className="text-xs text-white/40 uppercase mb-1">Sharp Money</div>
-                              <div className="text-orange-400 font-medium text-sm">{analysis.marketAnalysis.sharpMoney || "Non détecté"}</div>
-                          </div>
+              {/* MONTE CARLO SIMULATOR */}
+              {analysis.monteCarlo && (
+                  <div className="bg-[#121212] border border-white/5 rounded-[2rem] p-6">
+                       <h3 className="text-purple-400 text-[10px] uppercase font-bold tracking-widest mb-1 flex items-center gap-2">
+                          🎲 Monte Carlo Engine
+                      </h3>
+                      <span className="text-[9px] text-white/30 mb-4 block">10,000 Simulations du Match</span>
+                      
+                      <div className="flex justify-between items-baseline mb-2">
+                          <span className="text-xl font-bold text-white">{analysis.monteCarlo.projectedScore.home} <span className="text-white/30 text-sm">-</span> {analysis.monteCarlo.projectedScore.away}</span>
+                          <span className="text-[9px] text-white/40 uppercase">Score Moyen Simulé</span>
                       </div>
-                  ) : ( <div className="text-white/30 text-xs italic">Données marché indisponibles</div> )}
-              </div>
+                      
+                      <MonteCarloChart monteCarlo={analysis.monteCarlo} />
+                  </div>
+              )}
 
-              {/* CONTRARIAN VIEW */}
-              {analysis.contrarianView && (
-                  <div className="flex-1 bg-red-900/10 border border-red-500/20 rounded-[2rem] p-6 relative overflow-hidden">
-                      <div className="absolute top-0 right-0 p-3 opacity-10 text-4xl">😈</div>
-                      <h3 className="text-red-400 text-[10px] uppercase font-bold tracking-widest mb-3">Avocat du Diable</h3>
-                      <p className="text-xs text-red-200/80 leading-relaxed italic">
-                          "{analysis.contrarianView}"
-                      </p>
+              {/* LIVE TRADING SCRIPT */}
+              {analysis.liveStrategy && analysis.liveStrategy.action !== '-' && (
+                  <div className="flex-1 bg-blue-900/10 border border-blue-500/20 rounded-[2rem] p-6 relative overflow-hidden flex flex-col">
+                       <div className="absolute top-0 right-0 p-3 opacity-10 text-4xl">⚡</div>
+                       <h3 className="text-blue-400 text-[10px] uppercase font-bold tracking-widest mb-4">Algo Live Trading</h3>
+                       
+                       <div className="flex flex-col gap-3">
+                           <div className="bg-blue-500/10 p-2 rounded border border-blue-500/20">
+                               <span className="text-[9px] text-blue-300 uppercase block mb-1">Trigger (Quand ?)</span>
+                               <span className="text-sm font-bold text-white">{analysis.liveStrategy.triggerTime}</span>
+                           </div>
+                           <div className="bg-blue-500/10 p-2 rounded border border-blue-500/20">
+                               <span className="text-[9px] text-blue-300 uppercase block mb-1">Condition (Quoi ?)</span>
+                               <span className="text-xs text-white leading-tight">{analysis.liveStrategy.condition}</span>
+                           </div>
+                           <div className="bg-white/10 p-2 rounded border border-white/10 mt-auto">
+                               <span className="text-[9px] text-white/50 uppercase block mb-1">Action</span>
+                               <span className="text-sm font-bold text-white block mb-1">{analysis.liveStrategy.action}</span>
+                               <span className="text-[10px] text-emerald-400">Target Cote: @{analysis.liveStrategy.targetOdds}</span>
+                           </div>
+                       </div>
                   </div>
               )}
           </div>
@@ -347,7 +373,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
                               </div>
                               <div className="flex items-center gap-2 mb-2">
                                   {/* Auto-detect player name for avatar */}
-                                  {sc.condition.split(' ').slice(0,3).join(' ').match(/[A-Z][a-z]+/) && (
+                                  {sc.condition && sc.condition.split(' ').slice(0,3).join(' ').match(/[A-Z][a-z]+/) && (
                                      <PlayerAvatar name={sc.condition.split(' ').slice(0,2).join(' ')} />
                                   )}
                                   <p className="text-sm font-bold text-white leading-tight">{sc.condition}</p>

@@ -1,19 +1,30 @@
 import { createClient } from '@supabase/supabase-js';
 
-// SAFE ACCESS TO ENV VARIABLES
-// On vérifie que 'env' existe sur import.meta pour éviter le crash "Cannot read properties of undefined"
-const env = (import.meta as any).env || {};
-const SUPABASE_URL = env.VITE_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = env.VITE_PUBLIC_SUPABASE_ANON_KEY;
+// Grâce à la config Vite mise à jour, process.env fonctionne maintenant dans le navigateur
+// pour les clés définies dans le fichier vite.config.ts
+const getEnv = (key: string) => {
+  // Supporte import.meta.env (Standard Vite) OU process.env (Polyfill)
+  if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key]) {
+    return (import.meta as any).env[key];
+  }
+  if (typeof process !== 'undefined' && process.env && process.env[key]) {
+    return process.env[key];
+  }
+  return '';
+};
 
-// Création conditionnelle du client
-// Si les clés manquent, on renvoie null pour que l'app bascule en mode Offline sans crasher
+const SUPABASE_URL = getEnv('VITE_PUBLIC_SUPABASE_URL');
+const SUPABASE_ANON_KEY = getEnv('VITE_PUBLIC_SUPABASE_ANON_KEY');
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.warn("⚠️ Configuration Supabase manquante.");
+}
+
 export const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) 
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
-        persistSession: false, // CRUCIAL: Désactive le stockage de session (Cookies/Local) pour éviter les erreurs "Failed to fetch"
-        autoRefreshToken: false,
-        detectSessionInUrl: false
+        persistSession: true,
+        autoRefreshToken: true,
       },
       global: {
         headers: { 'x-application-name': 'betmind-ai' }
@@ -21,19 +32,15 @@ export const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY)
     })
   : null;
 
-// --- CIRCUIT BREAKER ---
-// Si Supabase échoue (réseau, adblock, erreur config), on le marque "Offline"
-// et on arrête d'essayer de le contacter pour éviter les timeouts.
 let isOffline = false;
 
 export const markSupabaseOffline = () => {
   if (!isOffline) {
-    console.warn("🔌 Supabase marqué comme HORS LIGNE. Passage en mode 100% LocalStorage.");
+    console.warn("🔌 Mode Hors Ligne activé pour Supabase.");
     isOffline = true;
   }
 };
 
 export const isSupabaseConfigured = () => {
-  // On vérifie que les clés sont là ET que le réseau n'a pas planté
   return !isOffline && !!supabase; 
 };

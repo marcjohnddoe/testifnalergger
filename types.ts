@@ -69,6 +69,33 @@ export interface Scenario {
   reasoning?: string; // Explication détaillée pour l'accordéon
 }
 
+// --- NOUVEAUX TYPES ---
+
+export interface SimulationInputs {
+  homeAttack: number; // Score 0-100
+  homeDefense: number; // Score 0-100
+  awayAttack: number;
+  awayDefense: number;
+  tempo?: number; // Facteur de vitesse (surtout NBA)
+}
+
+export interface MonteCarloResult {
+  homeWinProb: number; // %
+  awayWinProb: number; // %
+  drawProb?: number; // %
+  projectedScore: { home: number; away: number };
+  distribution: { diff: number; count: number }[]; // Pour la Bell Curve (Différence de points)
+  totalIterations: number;
+}
+
+export interface LiveStrategy {
+  triggerTime: string; // ex: "Mi-temps" ou "75ème minute"
+  condition: string; // ex: "Score nul (0-0) ET Domination possession"
+  action: string; // ex: "Miser 'Home Team to Win'"
+  targetOdds: number; // Cote visée (ex: attendre que ça monte à 2.00)
+  rationale: string;
+}
+
 export interface MatchAnalysis {
   matchId: string;
   summary: string;
@@ -89,6 +116,11 @@ export interface MatchAnalysis {
   matchMinute?: string; // Nouveau: Minute du match (ex: "75'")
   marketAnalysis?: MarketAnalysis; // Nouveau: Analyse financière
   trueProbability?: TrueProbability; // Nouveau: Probas IA
+  
+  // --- NOUVEAUX CHAMPS ---
+  simulationInputs?: SimulationInputs; // Données brutes pour le moteur
+  monteCarlo?: MonteCarloResult; // Résultat de la simulation
+  liveStrategy?: LiveStrategy; // Plan de bataille live
 }
 
 export interface SearchResultMatch {
