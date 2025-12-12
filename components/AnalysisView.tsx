@@ -126,12 +126,35 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
               {match.homeTeam} <span className="text-white/20 mx-2 font-thin">vs</span> {match.awayTeam}
           </h2>
 
-          {analysis.liveScore && (
-              <div className="mt-4 flex flex-col items-center">
-                  <div className="px-6 py-2 bg-red-500/10 border border-red-500/20 rounded-2xl backdrop-blur-sm">
-                      <span className="text-3xl md:text-4xl font-mono font-bold text-red-500 tracking-widest">
-                          {analysis.liveScore}
-                      </span>
+          {/* LIVE SCOREBOARD */}
+          {(analysis.liveScore || match.status === 'live') && (
+              <div className="mt-6 flex flex-col items-center">
+                  <div className="relative px-8 py-4 bg-[#1a1a1a] border border-white/10 rounded-2xl overflow-hidden shadow-[0_0_30px_rgba(239,68,68,0.15)]">
+                      
+                      {/* Live Indicator Background */}
+                      {match.status === 'live' && (
+                          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-red-500/5 to-transparent animate-pulse"></div>
+                      )}
+
+                      <div className="flex flex-col items-center relative z-10">
+                          <span className="text-5xl md:text-6xl font-mono font-bold text-white tracking-widest leading-none">
+                              {analysis.liveScore || "0-0"}
+                          </span>
+                          
+                          {analysis.matchMinute ? (
+                              <div className="flex items-center gap-2 mt-2 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/20">
+                                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                                  <span className="text-xs font-bold text-red-400 font-mono">{analysis.matchMinute}</span>
+                              </div>
+                          ) : match.status === 'live' ? (
+                              <div className="flex items-center gap-2 mt-2 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/20">
+                                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                                  <span className="text-xs font-bold text-red-400 font-mono">LIVE</span>
+                              </div>
+                          ) : (
+                             <span className="text-[10px] text-white/30 mt-2 font-mono uppercase">Score Pré-match</span>
+                          )}
+                      </div>
                   </div>
               </div>
           )}

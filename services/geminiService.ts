@@ -26,6 +26,10 @@ const getParisDateParts = (offsetDays = 0) => {
     return { short, full };
 };
 
+const getCurrentParisTime = () => {
+    return new Date().toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
+};
+
 // --- HELPERS ---
 const isMatchExpired = (dateStr?: string, timeStr?: string): boolean => {
     if (!dateStr || !timeStr) return false;
@@ -35,7 +39,9 @@ const isMatchExpired = (dateStr?: string, timeStr?: string): boolean => {
     const matchDate = new Date(now.getFullYear(), month - 1, day, hour, minute);
     if (month === 12 && now.getMonth() === 0) matchDate.setFullYear(now.getFullYear() - 1);
     if (month === 1 && now.getMonth() === 11) matchDate.setFullYear(now.getFullYear() + 1);
-    const expiryTime = new Date(matchDate.getTime() + (3.5 * 60 * 60 * 1000));
+    
+    // On considère expiré si fini depuis 4h
+    const expiryTime = new Date(matchDate.getTime() + (4 * 60 * 60 * 1000));
     return now > expiryTime;
 };
 
@@ -53,7 +59,7 @@ const isLive = (dateStr?: string, timeStr?: string): boolean => {
 };
 
 const isValidMatchDate = (matchDate: string, matchTime: string, sport: string) => {
-    if (!matchTime) return false;
+    if (!matchTime || !matchDate) return false;
     const { short: today } = getParisDateParts(0);
     const { short: tomorrow } = getParisDateParts(1);
     if (matchDate === today) return true;
@@ -89,7 +95,8 @@ const cleanAndParseJSON = (text: string) => {
 export const fetchDailyMatches = async (category: string = 'All'): Promise<Match[]> => {
     const ai = getClient();
     const { full: todayFull, short: todayShort } = getParisDateParts(0);
-    const { short: tomorrowShort } = getParisDateParts(1);
+    const { full: tomorrowFull, short: tomorrowShort } = getParisDateParts(1);
+    const currentTime = getCurrentParisTime();
     
     const TARGET_LEAGUES = "Ligue 1 Uber Eats, NBA";
     let promptContext = "";
@@ -103,24 +110,30 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
     }
 
     const prompt = `
-      RÔLE: API JSON SPORTS TEMPS RÉEL.
-      DATE DE RÉFÉRENCE (FRANCE): ${todayFull}.
+      RÔLE: API JSON SPORTS TEMPS RÉEL (TOLÉRANCE ZÉRO).
+      DATE DE RÉFÉRENCE (FRANCE): ${todayFull} (${todayShort}).
+      DATE INTERDITE (DEMAIN): ${tomorrowFull} (${tomorrowShort}) (SAUF NBA NUIT).
+      HEURE ACTUELLE (FRANCE): ${currentTime}.
       
-      MISSION: Liste les matchs A VENIR ou EN COURS aujourd'hui (${todayShort}) ou cette nuit (${tomorrowShort}).
-      EXCLURE les matchs terminés.
+      MISSION: Liste les matchs A VENIR ou EN COURS.
       
       RECHERCHE GOOGLE: "Programme matchs ${TARGET_LEAGUES} ${todayFull} et nuit NBA"
       
       ${promptContext}
 
-      RÈGLES STRICTES:
-      1. Si NBA: Matchs de 01h00-05h00 (demain) INCLUS.
-      2. Si Ligue 1: Matchs du jour précis.
-      3. Format Date: "${todayShort}" ou "${tomorrowShort}".
-      4. Output JSON uniquement.
-      5. NE PAS utiliser de Markdown ou de code blocks. JSON brut.
+      RÈGLES STRICTES DE FILTRAGE (TOLÉRANCE ZÉRO):
+      1. TU DOIS IGNORER TOUS les matchs de football qui se jouent DEMAIN (${tomorrowShort}). Je ne veux QUE ceux d'aujourd'hui.
+      2. POUR LA NBA UNIQUEMENT: Tu peux inclure les matchs de la nuit prochaine (qui sont techniquement demain matin entre 00h00 et 10h00).
+      3. PAS DE MATCHS TERMINÉS. Si un match a commencé il y a plus de 2h par rapport à ${currentTime} et qu'il est fini, il doit être EXCLU.
+      4. Si tu n'es pas sûr de la date, NE METS PAS LE MATCH.
 
-      FORMAT JSON ATTENDU (Exemple):
+      RÈGLES DE FORMAT:
+      - Si NBA: Matchs de 01h00-05h00 (demain matin) INCLUS.
+      - Si Ligue 1: Matchs du jour précis.
+      - Format Date OBLIGATOIRE: "${todayShort}" ou "${tomorrowShort}".
+      - Output JSON uniquement. JSON Brut.
+
+      FORMAT JSON ATTENDU:
       [
         { "homeTeam": "Marseille", "awayTeam": "Nantes", "league": "Ligue 1", "time": "21:00", "date": "${todayShort}", "sport": "Football", "quickOdds": 1.75 },
         { "homeTeam": "Lakers", "awayTeam": "Warriors", "league": "NBA", "time": "02:30", "date": "${tomorrowShort}", "sport": "Basketball", "quickOdds": 2.10 }
@@ -133,7 +146,6 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
             contents: prompt,
             config: { 
                 tools: [{ googleSearch: {} }],
-                // IMPORTANT: responseMimeType & responseSchema DOIVENT être absents avec googleSearch
             }
         });
 
@@ -146,7 +158,7 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
             awayTeam: m.awayTeam,
             league: m.league || 'Ligue 1',
             time: m.time || "00:00",
-            date: m.date || todayShort,
+            date: m.date, // PLUS DE FALLBACK || todayShort. Si vide, on rejette.
             sport: (m.league && (m.league.includes('NBA') || m.league.includes('Basket'))) || m.sport === 'Basketball' ? SportType.BASKETBALL : SportType.FOOTBALL,
             status: isLive(m.date, m.time) ? 'live' : 'scheduled',
             quickPrediction: m.quickPrediction || "Analyse IA",
@@ -155,8 +167,9 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
             isTrending: (Number(m.quickOdds) > 0) && (Number(m.quickOdds) < 2.5)
         }));
 
-        // Filter expired & invalid dates
+        // Double check temporel côté client pour la sécurité
         matches = matches.filter((m: any) => 
+            m.date && // Rejette si date undefined
             isValidMatchDate(m.date, m.time, m.sport) && 
             !isMatchExpired(m.date, m.time)
         );
@@ -172,62 +185,82 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
 
 export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> => {
     const ai = getClient();
+    const isLiveMatch = match.status === 'live';
     
-    // 1. SMART DATA INSTRUCTIONS (FRANÇAIS)
     let smartDataInstructions = "";
-    if (match.sport === SportType.BASKETBALL) {
+    
+    // Instructions spécifiques LIVE vs PRÉ-MATCH pour la recherche de données
+    if (isLiveMatch) {
         smartDataInstructions = `
-        SMART DATA NBA (Recherche Google Obligatoire):
-        - FATIGUE: Chercher "NBA Rest Days", "B2B", "3IN4" pour ${match.homeTeam} et ${match.awayTeam}.
-        - ADVANCED STATS: Chercher "Net Rating", "Pace", "Offensive Rating" sur Dunk & Three.
-        - ABSENCES: Vérifier les dernières injury reports (ESPN, Twitter beat writers).
-        - COTES: Chercher "Cote match ${match.homeTeam} ${match.awayTeam} Winamax ParionsSport".
+        URGENT MODE LIVE (MATCH EN COURS):
+        - SCORE: Chercher "Score direct ${match.homeTeam} ${match.awayTeam}" (FlashScore, Google Sports).
+        - MINUTE: Trouver la minute de jeu actuelle.
+        - DYNAMIQUE: Qui domine les 10 dernières minutes ? (Tirs, Possession).
+        - COTES LIVE: Chercher les cotes en direct si possible.
         `;
     } else {
-        smartDataInstructions = `
-        SMART DATA FOOTBALL (Recherche Google Obligatoire):
-        - PREDICTIVE MODELS: Chercher les prédictions "The Analyst Opta Supercomputer".
-        - REAL FORM: Chercher "SofaScore rating" sur les 5 derniers matchs.
-        - xG: Chercher les stats "Understat" xG (Expected Goals).
-        - COTES: Chercher "Cote match ${match.homeTeam} ${match.awayTeam} Winamax ParionsSport".
-        `;
+        if (match.sport === SportType.BASKETBALL) {
+            smartDataInstructions = `
+            SMART DATA NBA (PRÉ-MATCH):
+            - FATIGUE: Chercher "NBA Rest Days", "B2B" pour ${match.homeTeam}.
+            - ADVANCED STATS: Chercher "Net Rating", "Offensive Rating".
+            - ABSENCES: Vérifier injury reports récents.
+            - COTES: Chercher "Cote match ${match.homeTeam} ${match.awayTeam}".
+            `;
+        } else {
+            smartDataInstructions = `
+            SMART DATA FOOTBALL (PRÉ-MATCH):
+            - PREDICTIVE MODELS: Chercher prédictions "Opta Supercomputer".
+            - FORME: Chercher "SofaScore rating" récents.
+            - xG: Chercher stats "Understat" xG.
+            - COTES: Chercher "Cote match ${match.homeTeam} ${match.awayTeam}".
+            `;
+        }
     }
 
+    // Définition du rôle et du contexte pour le prompt système
+    const rolePrompt = isLiveMatch 
+        ? "RÔLE: TRADER SPORTIF LIVE & COMMENTATEUR TEMPS RÉEL." 
+        : "RÔLE: Analyste Sportif Quantitatif Senior (Hedge Fund).";
+        
+    const contextPrompt = isLiveMatch
+        ? `SITUATION: Le match ${match.homeTeam} vs ${match.awayTeam} est ACTUELLEMENT EN COURS (LIVE).`
+        : `SITUATION: Le match ${match.homeTeam} vs ${match.awayTeam} va bientôt commencer.`;
+
     const judgePrompt = `
-        RÔLE: Analyste Sportif Quantitatif Senior (Hedge Fund).
-        MATCH: ${match.homeTeam} vs ${match.awayTeam} (${match.league}).
+        ${rolePrompt}
+        ${contextPrompt}
         LANGUE: FRANÇAIS.
         
-        OBJECTIF: Trouver un avantage mathématique et fournir 3 PRONOSTICS DISTINCTS.
+        PROTOCOLE DE PENSÉE (CHAIN OF THOUGHT) REQUIS.
         
         ${smartDataInstructions}
         
-        RÈGLES CRITIQUES SUR LES COTES:
-        1. Tu DOIS chercher les cotes réelles actuelles sur les bookmakers français (Winamax, ParionsSport, Unibet).
-        2. INTERDICTION TOTALE D'INVENTER OU D'ESTIMER UNE COTE. 
-        3. Si tu ne trouves pas la cote exacte via Google Search, tu DOIS mettre la valeur 0. L'interface affichera "En attente". Ne mets jamais de fausse cote.
+        RÈGLES CRITIQUES:
+        1. Cotes: Chercher les vraies cotes (Winamax/ParionsSport). Si introuvable => METTRE 0. INTERDIT D'INVENTER.
+        2. Si LIVE: Tu DOIS remplir "liveScore" (ex: "1-1") et "matchMinute" (ex: "54'").
+        3. Si LIVE: La stratégie "liveStrategy" doit être une action immédiate basée sur le jeu en cours.
 
         STRUCTURE DES PRONOSTICS (3 Requis):
-        1. "Main": Le pari vainqueur principal (Moneyline/1N2).
-        2. "Safety": Un pari plus sûr (Double chance, Handicap, ou Over/Under global).
-        3. "Prop": Un pari sur une performance joueur (Buteur, Points joueur, Passes).
+        1. "Main": Le pari principal.
+        2. "Safety": Pari sécurité.
+        3. "Prop": Performance joueur.
 
-        FORMAT DE SORTIE: JSON PUR UNIQUEMENT. NE PAS AJOUTER DE TEXTE AVANT OU APRÈS.
+        FORMAT DE SORTIE: JSON PUR.
+        LE PREMIER CHAMP DOIT ÊTRE "reasoning_trace".
 
         STRUCTURE JSON ATTENDUE:
         {
+            "reasoning_trace": "Etape 1: Check Live Score... Trouvé 1-0 à la 20ème... Etape 2: Analyse dynamique...",
             "matchId": "${match.id}",
-            "summary": "Analyse détaillée en français, expliquant les forces en présence, la fatigue et les enjeux...",
+            "summary": "Analyse détaillée (Live commentary si match en cours)...",
             "predictions": [
-                { "betType": "Vainqueur", "selection": "Lakers", "odds": 1.85, "confidence": 80, "units": 1, "reasoning": "...", "edge": 4.5 },
-                { "betType": "Sécurité", "selection": "Over 220.5 Points", "odds": 1.50, "confidence": 90, "units": 2, "reasoning": "...", "edge": 2.1 },
-                { "betType": "Buteur/Prop", "selection": "LeBron +25 Points", "odds": 0, "confidence": 60, "units": 0.5, "reasoning": "Cote non trouvée mais stat probable...", "edge": 0 }
+                { "betType": "Vainqueur", "selection": "Lakers", "odds": 1.85, "confidence": 80, "units": 1, "reasoning": "...", "edge": 4.5 }
             ],
-            "injuries": ["Joueur X (Out)", "Joueur Y (Incertain)"],
-            "keyFactors": ["Facteur Clé 1", "Facteur Clé 2"],
+            "injuries": ["Joueur X (Out)"],
+            "keyFactors": ["Facteur Clé 1"],
             "scenarios": [
-                 { "condition": "But rapide", "outcome": "Over 2.5", "likelihood": "Haute", "reasoning": "..." },
-                 { "condition": "0-0 à la Mi-temps", "outcome": "Match Nul", "likelihood": "Moyenne", "reasoning": "..." }
+                 { "condition": "But rapide", "outcome": "Over 2.5", "likelihood": "Haute", "reasoning": "..." }
             ],
             "advancedStats": [
                  { "label": "xG", "homeValue": "1.2", "awayValue": "0.8", "advantage": "home" }
@@ -236,11 +269,12 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
                 "homeAttack": 80, "homeDefense": 70, "awayAttack": 75, "awayDefense": 65, "tempo": 50
             },
             "liveStrategy": {
-                "triggerTime": "Mi-temps", "condition": "Si mené au score", "action": "Lay", "targetOdds": 2.0, "rationale": "..."
+                "triggerTime": "Immédiat", "condition": "Si score reste 1-0", "action": "Back Home", "targetOdds": 1.5, "rationale": "..."
             },
-            "liveScore": "0-0",
+            "liveScore": "1-0",
+            "matchMinute": "23'",
             "weather": "Clair",
-            "referee": "Nom de l'arbitre"
+            "referee": "Nom"
         }
     `;
 
@@ -250,11 +284,10 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
             contents: judgePrompt,
             config: { 
                 tools: [{ googleSearch: {} }],
-                // IMPORTANT: responseMimeType & responseSchema DOIVENT être absents avec googleSearch
             }
         });
 
-        // Manual parsing since we cannot use responseSchema with tools
+        // Manual parsing
         const data = cleanAndParseJSON(response.text || "{}");
         
         // 3. ENRICHISSEMENT (Monte Carlo Local)

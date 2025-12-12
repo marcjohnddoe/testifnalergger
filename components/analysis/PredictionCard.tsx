@@ -80,7 +80,7 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
                             </span>
                             {mainPrediction?.edge !== undefined && (
                                 <span className={`px-2 py-1 rounded bg-white/10 border border-white/10 text-[10px] font-bold uppercase tracking-widest ${mainPrediction.edge > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                    Edge {mainPrediction.edge > 0 ? '+' : ''}{(mainPrediction.edge * 100).toFixed(1)}%
+                                    Edge {mainPrediction.edge > 0 ? '+' : ''}{mainPrediction.edge.toFixed(1)}%
                                 </span>
                             )}
                         </div>

@@ -98,6 +98,7 @@ export interface LiveStrategy {
 
 export interface MatchAnalysis {
   matchId: string;
+  reasoning_trace?: string; // LE BROUILLON DE L'IA (Reasoning Trace)
   summary: string;
   contrarianView?: string; // L'avis de l'avocat du diable
   scenarios?: Scenario[]; // Scénarios conditionnels
