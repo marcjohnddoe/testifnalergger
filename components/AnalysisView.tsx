@@ -117,11 +117,19 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
 
         {/* HERO HEADER */}
         <motion.div variants={itemVariants} className="text-center mb-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/5 text-[10px] uppercase tracking-widest text-white/60 mb-4">
-              <span>{match.league}</span>
-              <span className="w-1 h-1 bg-white/30 rounded-full"></span>
-              <span>{match.date}</span>
+          <div className="flex justify-center items-center gap-2 mb-4">
+             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/5 text-[10px] uppercase tracking-widest text-white/60">
+                <span>{match.league}</span>
+                <span className="w-1 h-1 bg-white/30 rounded-full"></span>
+                <span>{match.date}</span>
+             </div>
+             {analysis.tvChannel && (
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-blue-500/10 text-[10px] uppercase tracking-widest text-blue-300 border-blue-500/20">
+                    <span>📺 {analysis.tvChannel}</span>
+                </div>
+            )}
           </div>
+          
           <h2 className="text-4xl md:text-6xl font-display font-bold text-white tracking-tighter mb-2">
               {match.homeTeam} <span className="text-white/20 mx-2 font-thin">vs</span> {match.awayTeam}
           </h2>

@@ -6,9 +6,9 @@ import { Dashboard } from './components/Dashboard';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 15, // Les données sont fraîches pendant 15 minutes
+      staleTime: 1000 * 30, // Les données sont fraîches pendant 30 secondes (Mode Live)
       gcTime: 1000 * 60 * 60 * 24, // Garder en cache 24h (Garbage Collection)
-      refetchOnWindowFocus: false, // Évite de recharger quand on change d'onglet
+      refetchOnWindowFocus: true, // Recharger quand on change d'onglet et qu'on revient
       retry: 1,
     },
   },

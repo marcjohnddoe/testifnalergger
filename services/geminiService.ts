@@ -235,6 +235,7 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
         PROTOCOLE DE PENSÉE (CHAIN OF THOUGHT) REQUIS.
         
         ${smartDataInstructions}
+        INFO DIFFUSION: Trouve la chaîne TV française qui diffuse le match (ex: BeIN, Canal, Amazon, etc).
         
         RÈGLES CRITIQUES:
         1. Cotes: Chercher les vraies cotes (Winamax/ParionsSport). Si introuvable => METTRE 0. INTERDIT D'INVENTER.
@@ -274,7 +275,8 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
             "liveScore": "1-0",
             "matchMinute": "23'",
             "weather": "Clair",
-            "referee": "Nom"
+            "referee": "Nom",
+            "tvChannel": "BeIN Sports 1"
         }
     `;
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchDailyMatches, analyzeMatchDeeply } from '../services/geminiService';
 import { Match, MatchAnalysis, SportType } from '../types';
@@ -7,26 +7,45 @@ import { AnalysisView } from './AnalysisView';
 
 type TabType = 'All' | SportType | 'Trending' | 'Safe' | 'HighOdds' | 'Value';
 
+// Helper local pour filtrer instantanément les vieux matchs (même si le cache API est encore là)
+const isMatchExpiredLocal = (dateStr?: string, timeStr?: string) => {
+    if (!dateStr || !timeStr) return false;
+    const now = new Date();
+    // On assume que dateStr est "JJ/MM"
+    const [day, month] = dateStr.split('/').map(Number);
+    const cleanTime = timeStr.replace('h', ':');
+    const [hour, minute] = cleanTime.split(':').map(Number);
+    
+    const matchDate = new Date();
+    matchDate.setMonth(month - 1);
+    matchDate.setDate(day);
+    matchDate.setHours(hour, minute, 0, 0);
+
+    // Gestion année (Si on est en déc et match en janv)
+    if (month === 1 && now.getMonth() === 11) matchDate.setFullYear(now.getFullYear() + 1);
+    if (month === 12 && now.getMonth() === 0) matchDate.setFullYear(now.getFullYear() - 1);
+
+    // Buffer de 2h30 (150 min) après le début
+    const expiryTime = new Date(matchDate.getTime() + (150 * 60 * 1000));
+    return now > expiryTime;
+};
+
 export const Dashboard = () => {
   const [activeTab, setActiveTab] = useState<TabType>('All');
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   
-  // React Query pour les matchs
-  // La clé dépend du tab (pour l'optimisation NBA/Foot) mais on pourrait charger 'All' et filtrer localement
-  // Ici on garde la logique "Fetch ce dont on a besoin"
+  // React Query avec auto-refresh toutes les 2 minutes pour garder les cotes à jour
   const { data: matches = [], isLoading: loadingMatches, refetch: refetchMatches, isRefetching } = useQuery({
     queryKey: ['matches', activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'],
     queryFn: () => fetchDailyMatches(activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'),
-    staleTime: 1000 * 60 * 15 // 15 min de cache
+    refetchInterval: 1000 * 120, // Refresh auto toutes les 2 min
   });
 
-  // React Query pour l'analyse sélectionnée
-  // enabled: !!selectedMatch empêche la requête tant qu'aucun match n'est choisi
   const { data: analysis = null, isLoading: loadingAnalysis, refetch: refetchAnalysis } = useQuery({
     queryKey: ['analysis', selectedMatch?.id],
     queryFn: () => selectedMatch ? analyzeMatchDeeply(selectedMatch) : Promise.reject('No match'),
     enabled: !!selectedMatch,
-    staleTime: 1000 * 60 * 60, // 1h de cache pour l'analyse approfondie
+    staleTime: 1000 * 60 * 60, 
   });
 
   const handleMatchSelect = (match: Match) => {
@@ -49,27 +68,28 @@ export const Dashboard = () => {
     { id: SportType.BASKETBALL, label: '🏀 NBA' },
   ];
 
-  const filteredMatches = matches.filter(m => {
-      if (activeTab === 'Trending') return m.isTrending;
-      
-      if (activeTab === 'Safe') {
-          return (m.quickConfidence || 0) > 70;
-      }
-      
-      if (activeTab === 'HighOdds') {
-          return (m.quickOdds || 0) >= 2.50;
-      }
+  // FILTRAGE AVANCÉ
+  const filteredMatches = useMemo(() => {
+      // 1. D'abord, on retire les matchs expirés (Nettoyage Client)
+      const freshMatches = matches.filter(m => !isMatchExpiredLocal(m.date, m.time));
 
-      if (activeTab === 'Value') {
-          const prob = (m.quickConfidence || 50) / 100;
-          const valueScore = prob * (m.quickOdds || 0);
-          return valueScore > 1.1;
-      }
+      // 2. Ensuite on applique les filtres d'onglets
+      return freshMatches.filter(m => {
+          if (activeTab === 'Trending') return m.isTrending;
+          if (activeTab === 'Safe') return (m.quickConfidence || 0) > 70;
+          if (activeTab === 'HighOdds') return (m.quickOdds || 0) >= 2.50;
+          
+          if (activeTab === 'Value') {
+              const prob = (m.quickConfidence || 50) / 100;
+              const valueScore = prob * (m.quickOdds || 0);
+              return valueScore > 1.1;
+          }
 
-      if (activeTab === SportType.FOOTBALL) return m.sport === SportType.FOOTBALL;
-      if (activeTab === SportType.BASKETBALL) return m.sport === SportType.BASKETBALL;
-      return true;
-  });
+          if (activeTab === SportType.FOOTBALL) return m.sport === SportType.FOOTBALL;
+          if (activeTab === SportType.BASKETBALL) return m.sport === SportType.BASKETBALL;
+          return true;
+      });
+  }, [matches, activeTab]);
 
   return (
     <div className="min-h-screen w-full bg-[#050505] relative">
@@ -114,7 +134,7 @@ export const Dashboard = () => {
 
       {/* MAIN CONTENT */}
       <main className="max-w-7xl mx-auto px-4 py-8 relative z-10">
-        {loadingMatches ? (
+        {loadingMatches && matches.length === 0 ? (
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                  {[1,2,3,4].map(i => <div key={i} className="h-48 rounded-3xl bg-white/5 animate-pulse border border-white/5"></div>)}
              </div>
@@ -122,9 +142,11 @@ export const Dashboard = () => {
             <div className="flex flex-col items-center justify-center py-20 text-center">
                 <div className="text-4xl mb-4 opacity-30">🔍</div>
                 <h3 className="text-white text-lg font-medium">Aucun match trouvé</h3>
-                <p className="text-white/40 text-sm mb-4">Essayez d'actualiser ou de changer de filtre.</p>
+                <p className="text-white/40 text-sm mb-4">
+                    {matches.length > 0 ? "Les matchs sont terminés ou filtrés." : "Essayez d'actualiser."}
+                </p>
                 <button onClick={() => refetchMatches()} className="px-6 py-2 bg-blue-600 rounded-full text-sm font-bold text-white hover:bg-blue-500 transition-colors">
-                    Actualiser
+                    Forcer l'Actualisation
                 </button>
             </div>
         ) : (
