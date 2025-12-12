@@ -1,5 +1,5 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { fetchDailyMatches, analyzeMatchDeeply } from '../services/geminiService';
 import { Match, MatchAnalysis, SportType } from '../types';
 import { MatchCard } from './MatchCard';
@@ -8,75 +8,30 @@ import { AnalysisView } from './AnalysisView';
 type TabType = 'All' | SportType | 'Trending' | 'Safe' | 'HighOdds' | 'Value';
 
 export const Dashboard = () => {
-  const [matches, setMatches] = useState<Match[]>([]);
   const [activeTab, setActiveTab] = useState<TabType>('All');
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
-  const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
   
-  const [loadingMatches, setLoadingMatches] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
+  // React Query pour les matchs
+  // La clé dépend du tab (pour l'optimisation NBA/Foot) mais on pourrait charger 'All' et filtrer localement
+  // Ici on garde la logique "Fetch ce dont on a besoin"
+  const { data: matches = [], isLoading: loadingMatches, refetch: refetchMatches, isRefetching } = useQuery({
+    queryKey: ['matches', activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'],
+    queryFn: () => fetchDailyMatches(activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'),
+    staleTime: 1000 * 60 * 15 // 15 min de cache
+  });
 
-  // Initial Load (Cache allowed)
-  useEffect(() => {
-    loadMatches(false);
-  }, [activeTab]);
+  // React Query pour l'analyse sélectionnée
+  // enabled: !!selectedMatch empêche la requête tant qu'aucun match n'est choisi
+  const { data: analysis = null, isLoading: loadingAnalysis, refetch: refetchAnalysis } = useQuery({
+    queryKey: ['analysis', selectedMatch?.id],
+    queryFn: () => selectedMatch ? analyzeMatchDeeply(selectedMatch) : Promise.reject('No match'),
+    enabled: !!selectedMatch,
+    staleTime: 1000 * 60 * 60, // 1h de cache pour l'analyse approfondie
+  });
 
-  const loadMatches = async (force: boolean) => {
-    setLoadingMatches(true);
-    try {
-        let category = 'All';
-        // Si on est sur un sport spécifique, on le passe pour optimiser le prompt Gemini
-        if (activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL) {
-            category = activeTab;
-        }
-        // forceRefresh est passé à fetchDailyMatches
-        const data = await fetchDailyMatches(category, force);
-        setMatches(data);
-    } catch (e) {
-        console.error(e);
-    } finally {
-        setLoadingMatches(false);
-    }
-  };
-
-  const handleRefresh = async () => {
-      setIsRefreshing(true);
-      // Force le refresh (ignore le cache)
-      await loadMatches(true);
-      setIsRefreshing(false);
-  };
-
-  const handleMatchSelect = async (match: Match) => {
+  const handleMatchSelect = (match: Match) => {
     setSelectedMatch(match);
-    setAnalysis(null);
-    setLoadingAnalysis(true);
     document.body.style.overflow = 'hidden';
-
-    try {
-      const result = await analyzeMatchDeeply(match);
-      setAnalysis(result);
-    } catch (err) {
-      console.error(err);
-      setAnalysis(null);
-    } finally {
-      setLoadingAnalysis(false);
-    }
-  };
-
-  // NOUVEAU: Refresh spécifiquement l'analyse (Live Update)
-  const handleAnalysisRefresh = async () => {
-      if (!selectedMatch) return;
-      setLoadingAnalysis(true); // Remet le loading à true, AnalysisView affichera l'overlay
-      try {
-          // Appel avec forceRefresh = true
-          const result = await analyzeMatchDeeply(selectedMatch, true);
-          setAnalysis(result);
-      } catch (err) {
-          console.error("Refresh failed", err);
-      } finally {
-          setLoadingAnalysis(false);
-      }
   };
 
   const closeAnalysis = () => {
@@ -98,21 +53,17 @@ export const Dashboard = () => {
       if (activeTab === 'Trending') return m.isTrending;
       
       if (activeTab === 'Safe') {
-          // Filtre Sûr : Confiance > 70%
           return (m.quickConfidence || 0) > 70;
       }
       
       if (activeTab === 'HighOdds') {
-          // Filtre Grosses Cotes : Cote > 2.50
           return (m.quickOdds || 0) >= 2.50;
       }
 
       if (activeTab === 'Value') {
-          // Filtre Value : Le "Value Score" (Cote * Probabilité > 1.1)
-          // On estime la probabilité via la confiance de l'IA (ex: 80% = 0.8)
           const prob = (m.quickConfidence || 50) / 100;
           const valueScore = prob * (m.quickOdds || 0);
-          return valueScore > 1.1; // Seuil de "Value"
+          return valueScore > 1.1;
       }
 
       if (activeTab === SportType.FOOTBALL) return m.sport === SportType.FOOTBALL;
@@ -131,7 +82,7 @@ export const Dashboard = () => {
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-white to-gray-400 text-black flex items-center justify-center font-bold text-xl shadow-[0_0_20px_rgba(255,255,255,0.15)]">B</div>
                 <div>
                     <h1 className="text-lg font-bold tracking-tight text-white leading-none">BetMind <span className="text-white/40 font-normal">AI</span></h1>
-                    <p className="text-[10px] text-white/30 uppercase tracking-widest font-medium">Standalone Edition</p>
+                    <p className="text-[10px] text-white/30 uppercase tracking-widest font-medium">Hedge Fund Edition</p>
                 </div>
             </div>
 
@@ -148,11 +99,11 @@ export const Dashboard = () => {
                     ))}
                     
                     <button 
-                        onClick={handleRefresh}
-                        disabled={isRefreshing || loadingMatches}
-                        className={`hidden md:flex w-9 h-9 ml-2 rounded-full items-center justify-center bg-white/5 hover:bg-white/10 border border-white/5 transition-all ${isRefreshing ? 'text-green-400 bg-green-900/20' : 'text-white/40'}`}
+                        onClick={() => refetchMatches()}
+                        disabled={isRefetching || loadingMatches}
+                        className={`hidden md:flex w-9 h-9 ml-2 rounded-full items-center justify-center bg-white/5 hover:bg-white/10 border border-white/5 transition-all ${isRefetching ? 'text-green-400 bg-green-900/20' : 'text-white/40'}`}
                     >
-                        <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className={`w-4 h-4 ${isRefetching ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
                     </button>
@@ -172,7 +123,7 @@ export const Dashboard = () => {
                 <div className="text-4xl mb-4 opacity-30">🔍</div>
                 <h3 className="text-white text-lg font-medium">Aucun match trouvé</h3>
                 <p className="text-white/40 text-sm mb-4">Essayez d'actualiser ou de changer de filtre.</p>
-                <button onClick={handleRefresh} className="px-6 py-2 bg-blue-600 rounded-full text-sm font-bold text-white hover:bg-blue-500 transition-colors">
+                <button onClick={() => refetchMatches()} className="px-6 py-2 bg-blue-600 rounded-full text-sm font-bold text-white hover:bg-blue-500 transition-colors">
                     Actualiser
                 </button>
             </div>
@@ -200,7 +151,7 @@ export const Dashboard = () => {
                         analysis={analysis} 
                         loading={loadingAnalysis} 
                         onClose={closeAnalysis}
-                        onRefresh={handleAnalysisRefresh} 
+                        onRefresh={() => refetchAnalysis()} 
                     />
                 </div>
             </div>
