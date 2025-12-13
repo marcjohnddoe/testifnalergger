@@ -8,38 +8,37 @@ import { TicketSlip } from './TicketSlip';
 
 type TabType = 'All' | SportType | 'Trending' | 'Safe' | 'HighOdds' | 'Value';
 
-// Helper local pour filtrer instantanément les vieux matchs
+// Helper local robuste pour les dates et heures
 const isMatchExpiredLocal = (dateStr?: string, timeStr?: string) => {
     if (!dateStr || !timeStr) return false;
     const now = new Date();
     
-    // Gestion date "JJ/MM" ou "YYYY-MM-DD"
+    // 1. Supporte les formats "DD/MM" ET "YYYY-MM-DD"
     const parts = dateStr.includes('/') ? dateStr.split('/') : dateStr.split('-');
-    // Si format YYYY-MM-DD : parts[0]=YYYY, parts[1]=MM, parts[2]=DD
-    // Si format DD/MM : parts[0]=DD, parts[1]=MM
+    // Si DD/MM : parts[0]=DD. Si YYYY-MM-DD : parts[2]=DD
     const day = dateStr.includes('/') ? Number(parts[0]) : Number(parts[2]);
     const month = dateStr.includes('/') ? Number(parts[1]) : Number(parts[1]);
     
-    if (!day || !month) return false;
+    if (!day || !month) return false; // Si date illisible, on affiche par sécurité
 
     const cleanTime = timeStr.replace('h', ':');
     const [hour, minute] = cleanTime.split(':').map(Number);
     
-    // FIX 1 : Si l'heure est "00:00" (défaut IA) ou invalide, on n'expire JAMAIS le match aujourd'hui
+    // 2. FIX MINUIT : Si l'heure est "00:00" ou invalide, on garde le match affiché toute la journée
     if ((hour === 0 && minute === 0) || isNaN(hour)) {
-        // On vérifie juste si la date est passée (hier), sinon on affiche
         const matchDateOnly = new Date();
         matchDateOnly.setMonth(month - 1);
         matchDateOnly.setDate(day);
-        matchDateOnly.setHours(23, 59, 59); // On le garde jusqu'à la fin de la journée
+        matchDateOnly.setHours(23, 59, 59); // Expire à la fin de la journée
         
-        // Gestion changement année
+        // Gestion changement d'année
         if (month === 1 && now.getMonth() === 11) matchDateOnly.setFullYear(now.getFullYear() + 1);
         if (month === 12 && now.getMonth() === 0) matchDateOnly.setFullYear(now.getFullYear() - 1);
         
-        return now > matchDateOnly; // Expire seulement si on est le lendemain
+        return now > matchDateOnly;
     }
 
+    // Calcul normal pour les heures valides
     const matchDate = new Date();
     matchDate.setMonth(month - 1);
     matchDate.setDate(day);
@@ -47,10 +46,9 @@ const isMatchExpiredLocal = (dateStr?: string, timeStr?: string) => {
 
     if (month === 1 && now.getMonth() === 11) matchDate.setFullYear(now.getFullYear() + 1);
     if (month === 12 && now.getMonth() === 0) matchDate.setFullYear(now.getFullYear() - 1);
-
-    // FIX 2 : Buffer large de 4h (240 min)
-    const expiryTime = new Date(matchDate.getTime() + (240 * 60 * 1000));
-    return now > expiryTime;
+    
+    // 3. Buffer large de 4h (240 min) pour ne pas cacher un match en cours
+    return now > new Date(matchDate.getTime() + (240 * 60 * 1000));
 };
 
 export const Dashboard = () => {

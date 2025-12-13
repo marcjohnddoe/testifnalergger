@@ -42,14 +42,15 @@ const getParisDateParts = (offsetDays = 0) => {
 
 const getCurrentParisTime = () => new Date().toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
 
+// GÉNÉRATEUR D'ID SÉCURISÉ (Empêche l'écran blanc)
 const generateMatchId = (home: string, away: string) => {
-    // Protection contre les valeurs manquantes (Crash preventer)
+    // 1. Protection contre les données vides
     const safeHome = home || "unknown-home";
     const safeAway = away || "unknown-away";
 
     const normalize = (str: string) => str.toLowerCase()
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Enlève les accents
-        .replace(/[^a-z0-9]/g, ""); // Enlève tout sauf lettres et chiffres
+        .replace(/[^a-z0-9]/g, ""); // Garde uniquement lettres et chiffres
         
     return `${normalize(safeHome)}-${normalize(safeAway)}`;
 };
@@ -223,15 +224,23 @@ async function fetchFromGeminiScraper(category: string): Promise<Match[]> {
         });
         const rawData = cleanAndParseJSON(response.text || "[]");
         if (!Array.isArray(rawData)) return [];
-        return rawData.map((m: any) => ({
-            id: generateMatchId(m.homeTeam, m.awayTeam),
-            homeTeam: m.homeTeam, awayTeam: m.awayTeam, league: m.league || "Ligue",
-            time: m.time || "00:00", date: m.date || todayShort,
-            sport: (m.league?.includes('NBA') || m.sport === 'Basketball') ? SportType.BASKETBALL : SportType.FOOTBALL,
-            status: 'scheduled',
-            quickPrediction: "IA", quickConfidence: 0, quickOdds: Number(m.quickOdds) || 0,
-            isTrending: false
-        }));
+        return rawData.map((m: any) => {
+            // SÉCURITÉ : Si l'IA renvoie un objet vide, on l'ignore pour ne pas casser l'appli
+            if (!m.homeTeam || !m.awayTeam) return null;
+
+            return {
+                id: generateMatchId(m.homeTeam, m.awayTeam),
+                homeTeam: m.homeTeam, 
+                awayTeam: m.awayTeam, 
+                league: m.league || "Ligue",
+                time: m.time || "00:00", // "00:00" est maintenant géré par le dashboard
+                date: m.date || todayShort,
+                sport: (m.league?.includes('NBA') || m.sport === 'Basketball') ? SportType.BASKETBALL : SportType.FOOTBALL,
+                status: 'scheduled' as const,
+                quickPrediction: "IA", quickConfidence: 0, quickOdds: Number(m.quickOdds) || 0,
+                isTrending: false
+            };
+        }).filter((m: any) => m !== null) as Match[]; // <--- TRES IMPORTANT : Retire les éléments nulls et cast
     });
 }
 
