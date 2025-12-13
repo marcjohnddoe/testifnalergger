@@ -43,8 +43,15 @@ const getParisDateParts = (offsetDays = 0) => {
 const getCurrentParisTime = () => new Date().toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
 
 const generateMatchId = (home: string, away: string) => {
-    const normalize = (str: string) => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
-    return `${normalize(home)}-${normalize(away)}`;
+    // Protection contre les valeurs manquantes (Crash preventer)
+    const safeHome = home || "unknown-home";
+    const safeAway = away || "unknown-away";
+
+    const normalize = (str: string) => str.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Enlève les accents
+        .replace(/[^a-z0-9]/g, ""); // Enlève tout sauf lettres et chiffres
+        
+    return `${normalize(safeHome)}-${normalize(safeAway)}`;
 };
 
 const isMatchExpired = (dateStr?: string, timeStr?: string): boolean => {
