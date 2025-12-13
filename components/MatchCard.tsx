@@ -24,11 +24,22 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onClick }) => {
             <span className="text-[10px] font-bold uppercase tracking-wider text-white/50 bg-white/5 px-2 py-1 rounded border border-white/5">
                 {match.league}
             </span>
-            {match.status === 'live' && (
-                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-500/20 text-[10px] font-bold text-red-400 border border-red-500/20">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> LIVE
-                </span>
-            )}
+            
+            {/* BADGES LIVE & MARKET RADAR */}
+            <div className="flex gap-2">
+                {match.status === 'live' && (
+                    <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-500/20 text-[10px] font-bold text-red-400 border border-red-500/20">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> LIVE
+                    </span>
+                )}
+                
+                {/* NOUVEAU: BADGE MARKET RADAR */}
+                {match.marketMove && (
+                    <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${match.marketAlert === 'dropping' ? 'bg-purple-500/20 text-purple-400 border-purple-500/20' : 'bg-blue-500/20 text-blue-400 border-blue-500/20'}`}>
+                        {match.marketAlert === 'dropping' ? '📉' : '⚡'} {match.marketMove}
+                    </span>
+                )}
+            </div>
          </div>
          <div className="text-[11px] font-medium text-white/40 flex flex-col items-end">
             <span className="text-white/60">{match.date}</span>
@@ -65,7 +76,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onClick }) => {
         <div className="flex flex-col items-end">
              <span className="text-[9px] text-white/30 uppercase tracking-widest mb-0.5">Cote FDJ</span>
              {match.quickOdds && match.quickOdds > 1 ? (
-                 <span className="text-sm font-mono font-bold text-black bg-white px-2 py-0.5 rounded shadow-[0_0_10px_rgba(255,255,255,0.2)]">
+                 <span className={`text-sm font-mono font-bold text-black px-2 py-0.5 rounded shadow-[0_0_10px_rgba(255,255,255,0.2)] ${match.marketAlert === 'dropping' ? 'bg-purple-200' : 'bg-white'}`}>
                      {match.quickOdds.toFixed(2)}
                  </span>
              ) : (

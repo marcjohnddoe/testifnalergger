@@ -20,6 +20,9 @@ export interface Match {
   quickPrediction?: string; // Nouveau: Prono rapide affiché sur la liste
   quickConfidence?: number; // Nouveau: % affiché sur la liste
   quickOdds?: number; // Nouveau: Cote associée au prono rapide
+  // NOUVEAU : Radar de Marché
+  marketMove?: string; // ex: "-15% Drop", "High Vol"
+  marketAlert?: 'dropping' | 'heavy' | 'stable'; // Pour la couleur du badge
 }
 
 export interface BettingTip {
@@ -96,6 +99,15 @@ export interface LiveStrategy {
   rationale: string;
 }
 
+export interface KeyDuel {
+  player1: string; // Nom du joueur 1 (Home)
+  player2: string; // Nom du joueur 2 (Away)
+  statLabel: string; // Ex: "Points/Match" ou "Buts cette saison"
+  value1: string | number;
+  value2: string | number;
+  winner: 'player1' | 'player2' | 'equal';
+}
+
 export interface MatchAnalysis {
   matchId: string;
   reasoning_trace?: string; // LE BROUILLON DE L'IA (Reasoning Trace)
@@ -117,6 +129,7 @@ export interface MatchAnalysis {
   matchMinute?: string; // Nouveau: Minute du match (ex: "75'")
   marketAnalysis?: MarketAnalysis; // Nouveau: Analyse financière
   trueProbability?: TrueProbability; // Nouveau: Probas IA
+  keyDuel?: KeyDuel; // Nouveau: Duel de joueurs
   
   // --- NOUVEAUX CHAMPS ---
   simulationInputs?: SimulationInputs; // Données brutes pour le moteur

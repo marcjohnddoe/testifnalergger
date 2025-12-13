@@ -1,23 +1,74 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { Match, MatchAnalysis, SportType, DetailedInjury, SimulationInputs } from "../types";
+import { GoogleGenAI } from "@google/genai";
+import { z } from "zod";
+import { Match, MatchAnalysis, SportType } from "../types";
 import { supabase, isSupabaseConfigured } from "../lib/supabase";
 import { runMonteCarlo } from "./simulationService";
 
-// --- CONFIG ---
 const getClient = () => {
   const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-      console.error("API KEY MANQUANTE ! Vérifiez votre fichier .env");
-      throw new Error("API Key missing");
-  }
+  if (!apiKey) throw new Error("API Key missing");
   return new GoogleGenAI({ apiKey });
 };
 
-// --- UTILS TIMEZONE ---
-const getParisDBDate = () => {
-    return new Date().toLocaleDateString('fr-CA', { timeZone: 'Europe/Paris' }); 
-};
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
+    try {
+        return await fn();
+    } catch (e) {
+        if (retries === 0) throw e;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return withRetry(fn, retries - 1, delay * 2);
+    }
+}
 
+// --- SCHEMAS ZOD ---
+const AnalysisSchema = z.object({
+  matchId: z.string().optional(),
+  reasoning_trace: z.string().describe("Trace de réflexion"),
+  summary: z.string(),
+  predictions: z.array(z.object({
+    betType: z.string(),
+    selection: z.string(),
+    odds: z.coerce.number(),
+    confidence: z.coerce.number().min(0).max(100),
+    units: z.coerce.number(),
+    reasoning: z.string(),
+    edge: z.coerce.number().optional()
+  })).min(3),
+  keyDuel: z.object({
+    player1: z.string(),
+    player2: z.string(),
+    statLabel: z.string(),
+    value1: z.union([z.string(), z.number()]),
+    value2: z.union([z.string(), z.number()]),
+    winner: z.enum(['player1', 'player2', 'equal'])
+  }).optional(),
+  injuries: z.array(z.union([z.string(), z.object({ player: z.string(), status: z.string(), impact: z.string().optional() })])),
+  keyFactors: z.array(z.string()),
+  scenarios: z.array(z.object({
+    condition: z.string(),
+    outcome: z.string(),
+    likelihood: z.string(),
+    reasoning: z.string().optional()
+  })),
+  advancedStats: z.array(z.object({
+    label: z.string(),
+    homeValue: z.union([z.string(), z.number()]),
+    awayValue: z.union([z.string(), z.number()]),
+    advantage: z.enum(['home', 'away', 'equal'])
+  })),
+  simulationInputs: z.object({
+    homeAttack: z.coerce.number(), homeDefense: z.coerce.number(), awayAttack: z.coerce.number(), awayDefense: z.coerce.number(), tempo: z.coerce.number().optional()
+  }),
+  liveStrategy: z.object({
+    triggerTime: z.string(), condition: z.string(), action: z.string(), targetOdds: z.coerce.number(), rationale: z.string()
+  }),
+  liveScore: z.string().optional(),
+  matchMinute: z.string().optional(),
+  weather: z.string().optional(),
+  referee: z.string().optional()
+});
+
+// --- UTILS ---
 const getParisDateParts = (offsetDays = 0) => {
     const d = new Date();
     d.setDate(d.getDate() + offsetDays);
@@ -26,34 +77,32 @@ const getParisDateParts = (offsetDays = 0) => {
     return { short, full };
 };
 
-const getCurrentParisTime = () => {
-    return new Date().toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
-};
+const getCurrentParisTime = () => new Date().toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
 
-// --- HELPERS ---
 const isMatchExpired = (dateStr?: string, timeStr?: string): boolean => {
-    if (!dateStr || !timeStr) return false;
+    if (!dateStr || !timeStr) return true;
     const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Paris"}));
     const [day, month] = dateStr.split('/').map(Number);
-    const [hour, minute] = timeStr.split(':').map(Number);
+    const cleanTime = timeStr.replace('h', ':');
+    const [hour, minute] = cleanTime.split(':').map(Number);
     const matchDate = new Date(now.getFullYear(), month - 1, day, hour, minute);
-    if (month === 12 && now.getMonth() === 0) matchDate.setFullYear(now.getFullYear() - 1);
     if (month === 1 && now.getMonth() === 11) matchDate.setFullYear(now.getFullYear() + 1);
-    
-    // On considère expiré si fini depuis 4h
-    const expiryTime = new Date(matchDate.getTime() + (4 * 60 * 60 * 1000));
-    return now > expiryTime;
+    if (month === 12 && now.getMonth() === 0) matchDate.setFullYear(now.getFullYear() - 1);
+    const bufferMinutes = 135; 
+    return now > new Date(matchDate.getTime() + (bufferMinutes * 60 * 1000));
 };
 
 const isLive = (dateStr?: string, timeStr?: string): boolean => {
     if (!dateStr || !timeStr) return false;
-    const nowParis = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Paris"}));
-    const [h, m] = timeStr.split(':').map(Number);
+    const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Paris"}));
+    const cleanTime = timeStr.replace('h', ':');
+    const [h, m] = cleanTime.split(':').map(Number);
     const matchTime = h * 60 + m;
-    const nowTime = nowParis.getHours() * 60 + nowParis.getMinutes();
+    const nowTime = now.getHours() * 60 + now.getMinutes();
     const { short: todayShort } = getParisDateParts(0);
     const { short: tomorrowShort } = getParisDateParts(1);
-    if (dateStr === todayShort) return nowTime >= matchTime && nowTime < matchTime + 150;
+
+    if (dateStr === todayShort) return nowTime >= matchTime && nowTime < matchTime + 135;
     if (dateStr === tomorrowShort && nowTime < 600) return nowTime >= matchTime && nowTime < matchTime + 150;
     return false;
 };
@@ -64,8 +113,8 @@ const isValidMatchDate = (matchDate: string, matchTime: string, sport: string) =
     const { short: tomorrow } = getParisDateParts(1);
     if (matchDate === today) return true;
     if (matchDate === tomorrow) {
-         const hour = parseInt(matchTime.split(':')[0] || "0");
-         return hour < 10; 
+         const cleanTime = matchTime.replace('h', ':');
+         return parseInt(cleanTime.split(':')[0] || "0") < 10; 
     }
     return false;
 };
@@ -84,234 +133,153 @@ const cleanAndParseJSON = (text: string) => {
         const end = Math.max(lastBrace, lastBracket);
         if (start !== -1 && end !== -1) cleanText = cleanText.substring(start, end + 1);
         return JSON.parse(cleanText);
-    } catch (e) {
-        console.error("JSON Parse Error", text);
-        return [];
-    }
+    } catch (e) { return []; }
 };
 
-// --- CORE FETCHING ---
-
+// --- FETCHING (MARKET RADAR INCLUS) ---
 export const fetchDailyMatches = async (category: string = 'All'): Promise<Match[]> => {
     const ai = getClient();
     const { full: todayFull, short: todayShort } = getParisDateParts(0);
     const { full: tomorrowFull, short: tomorrowShort } = getParisDateParts(1);
     const currentTime = getCurrentParisTime();
     
-    const TARGET_LEAGUES = "Ligue 1 Uber Eats, NBA";
     let promptContext = "";
+    let searchQuery = "";
     
     if (category === 'Basketball' || category === 'NBA') {
-        promptContext = `FOCUS EXCLUSIF: Matchs NBA qui se jouent CETTE NUIT (Date française: ${todayShort} soir ou ${tomorrowShort} matin très tôt).`;
+        promptContext = `FOCUS EXCLUSIF: Matchs NBA Nuit.`;
+        searchQuery = `"Programme NBA ${todayShort}" "NBA dropping odds today"`;
     } else if (category === 'Football') {
-        promptContext = `FOCUS EXCLUSIF: Matchs de Football (Ligue 1, Champions League) du ${todayFull}.`;
+        promptContext = `FOCUS EXCLUSIF: Foot Top 5 Europe.`;
+        searchQuery = `"Programme foot ${todayShort}" "Football market movers dropping odds"`;
     } else {
-        promptContext = `FOCUS: Matchs importants de ${TARGET_LEAGUES}. Foot (Ligue 1) et NBA.`;
+        promptContext = `FOCUS: Top Matchs Foot & NBA.`;
+        searchQuery = `"Matchs du jour cotes" "Dropping odds football nba today"`;
     }
 
     const prompt = `
-      RÔLE: API JSON SPORTS TEMPS RÉEL (TOLÉRANCE ZÉRO).
-      DATE DE RÉFÉRENCE (FRANCE): ${todayFull} (${todayShort}).
-      DATE INTERDITE (DEMAIN): ${tomorrowFull} (${tomorrowShort}) (SAUF NBA NUIT).
-      HEURE ACTUELLE (FRANCE): ${currentTime}.
+      RÔLE: API MARKET RADAR & FIXTURES.
+      DATE: ${todayFull}. HEURE: ${currentTime}.
       
-      MISSION: Liste les matchs A VENIR ou EN COURS.
+      MISSION:
+      1. Lister les matchs A VENIR/EN COURS.
+      2. Trouver les COTES RÉELLES.
+      3. DÉTECTER LES MOUVEMENTS DE MARCHÉ (Dropping Odds).
       
-      RECHERCHE GOOGLE: "Programme matchs ${TARGET_LEAGUES} ${todayFull} et nuit NBA"
+      RECHERCHE GOOGLE: ${searchQuery}
       
       ${promptContext}
 
-      RÈGLES STRICTES DE FILTRAGE (TOLÉRANCE ZÉRO):
-      1. TU DOIS IGNORER TOUS les matchs de football qui se jouent DEMAIN (${tomorrowShort}). Je ne veux QUE ceux d'aujourd'hui.
-      2. POUR LA NBA UNIQUEMENT: Tu peux inclure les matchs de la nuit prochaine (qui sont techniquement demain matin entre 00h00 et 10h00).
-      3. PAS DE MATCHS TERMINÉS. Si un match a commencé il y a plus de 2h par rapport à ${currentTime} et qu'il est fini, il doit être EXCLU.
-      4. Si tu n'es pas sûr de la date, NE METS PAS LE MATCH.
-
-      RÈGLES DE FORMAT:
-      - Si NBA: Matchs de 01h00-05h00 (demain matin) INCLUS.
-      - Si Ligue 1: Matchs du jour précis.
-      - Format Date OBLIGATOIRE: "${todayShort}" ou "${tomorrowShort}".
-      - Output JSON uniquement. JSON Brut.
-
-      FORMAT JSON ATTENDU:
+      RÈGLES DOUANIÈRES:
+      1. IGNORER matchs de DEMAIN (${tomorrowShort}) SAUF NBA NUIT.
+      2. IGNORER matchs finis.
+      3. MARKET RADAR: Si tu vois une cote qui chute (ex: ouverte à 2.10, maintenant 1.80), indique-le dans "marketMove".
+      
+      FORMAT JSON:
       [
-        { "homeTeam": "Marseille", "awayTeam": "Nantes", "league": "Ligue 1", "time": "21:00", "date": "${todayShort}", "sport": "Football", "quickOdds": 1.75 },
-        { "homeTeam": "Lakers", "awayTeam": "Warriors", "league": "NBA", "time": "02:30", "date": "${tomorrowShort}", "sport": "Basketball", "quickOdds": 2.10 }
+        { 
+          "homeTeam": "Lille", "awayTeam": "Rennes", "league": "L1", "time": "21:00", "date": "${todayShort}", "sport": "Football", 
+          "quickOdds": 2.15,
+          "marketMove": "-15% Drop" (Optionnel, si détecté),
+          "marketAlert": "dropping" (Optionnel: 'dropping' ou 'heavy')
+        }
       ]
     `;
 
-    try {
+    return withRetry(async () => {
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,
-            config: { 
-                tools: [{ googleSearch: {} }],
-            }
+            config: { tools: [{ googleSearch: {} }] }
         });
-
         const rawData = cleanAndParseJSON(response.text || "[]");
+        if (!Array.isArray(rawData)) throw new Error("Format invalide");
         
-        // Post-processing & Filtering
-        let matches = rawData.map((m: any) => ({
+        return rawData.map((m: any) => ({
             id: `${m.homeTeam}-${m.awayTeam}-${m.date}`.replace(/\s+/g, '-').toLowerCase(),
-            homeTeam: m.homeTeam,
-            awayTeam: m.awayTeam,
-            league: m.league || 'Ligue 1',
-            time: m.time || "00:00",
-            date: m.date, // PLUS DE FALLBACK || todayShort. Si vide, on rejette.
-            sport: (m.league && (m.league.includes('NBA') || m.league.includes('Basket'))) || m.sport === 'Basketball' ? SportType.BASKETBALL : SportType.FOOTBALL,
-            status: isLive(m.date, m.time) ? 'live' : 'scheduled',
-            quickPrediction: m.quickPrediction || "Analyse IA",
-            quickConfidence: 0,
+            homeTeam: m.homeTeam, awayTeam: m.awayTeam, league: m.league,
+            time: m.time || "00:00", date: m.date,
+            sport: (m.league?.includes('NBA') || m.sport === 'Basketball') ? SportType.BASKETBALL : SportType.FOOTBALL,
+            status: (isLive(m.date, m.time) ? 'live' : 'scheduled') as Match['status'],
+            quickPrediction: "Analyse IA", quickConfidence: 0, 
             quickOdds: Number(m.quickOdds) || 0,
-            isTrending: (Number(m.quickOdds) > 0) && (Number(m.quickOdds) < 2.5)
-        }));
-
-        // Double check temporel côté client pour la sécurité
-        matches = matches.filter((m: any) => 
-            m.date && // Rejette si date undefined
-            isValidMatchDate(m.date, m.time, m.sport) && 
-            !isMatchExpired(m.date, m.time)
-        );
-
-        return matches;
-    } catch (e) {
-        console.error("Gemini Scraping Failed", e);
-        return [];
-    }
+            isTrending: (Number(m.quickOdds) > 0) && (Number(m.quickOdds) < 2.5),
+            // Mapping des nouveaux champs Radar
+            marketMove: m.marketMove || undefined,
+            marketAlert: (['dropping', 'heavy', 'stable'].includes(m.marketAlert) ? m.marketAlert : undefined) as Match['marketAlert']
+        })).filter((m: any) => m.date && isValidMatchDate(m.date, m.time, m.sport) && !isMatchExpired(m.date, m.time));
+    });
 };
 
-// --- DEEP ANALYSIS WITH STRUCTURED OUTPUT & SMART DATA ---
-
+// --- ANALYSE DEEP (FIX SCORE LIVE) ---
 export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> => {
     const ai = getClient();
     const isLiveMatch = match.status === 'live';
     
-    let smartDataInstructions = "";
-    
-    // Instructions spécifiques LIVE vs PRÉ-MATCH pour la recherche de données
-    if (isLiveMatch) {
-        smartDataInstructions = `
-        URGENT MODE LIVE (MATCH EN COURS):
-        - SCORE: Chercher "Score direct ${match.homeTeam} ${match.awayTeam}" (FlashScore, Google Sports).
-        - MINUTE: Trouver la minute de jeu actuelle.
-        - DYNAMIQUE: Qui domine les 10 dernières minutes ? (Tirs, Possession).
-        - COTES LIVE: Chercher les cotes en direct si possible.
-        `;
-    } else {
-        if (match.sport === SportType.BASKETBALL) {
-            smartDataInstructions = `
-            SMART DATA NBA (PRÉ-MATCH):
-            - FATIGUE: Chercher "NBA Rest Days", "B2B" pour ${match.homeTeam}.
-            - ADVANCED STATS: Chercher "Net Rating", "Offensive Rating".
-            - ABSENCES: Vérifier injury reports récents.
-            - COTES: Chercher "Cote match ${match.homeTeam} ${match.awayTeam}".
-            `;
-        } else {
-            smartDataInstructions = `
-            SMART DATA FOOTBALL (PRÉ-MATCH):
-            - PREDICTIVE MODELS: Chercher prédictions "Opta Supercomputer".
-            - FORME: Chercher "SofaScore rating" récents.
-            - xG: Chercher stats "Understat" xG.
-            - COTES: Chercher "Cote match ${match.homeTeam} ${match.awayTeam}".
-            `;
-        }
-    }
+    const oddsContext = match.quickOdds > 0 
+        ? `INFO: Cote actuelle ${match.quickOdds}.` 
+        : `INFO: Aucune cote trouvée.`;
 
-    // Définition du rôle et du contexte pour le prompt système
-    const rolePrompt = isLiveMatch 
-        ? "RÔLE: TRADER SPORTIF LIVE & COMMENTATEUR TEMPS RÉEL." 
-        : "RÔLE: Analyste Sportif Quantitatif Senior (Hedge Fund).";
-        
-    const contextPrompt = isLiveMatch
-        ? `SITUATION: Le match ${match.homeTeam} vs ${match.awayTeam} est ACTUELLEMENT EN COURS (LIVE).`
-        : `SITUATION: Le match ${match.homeTeam} vs ${match.awayTeam} va bientôt commencer.`;
+    // INSTRUCTION ANTI-HALLUCINATION SCORE
+    const instructions = isLiveMatch 
+        ? `URGENT LIVE: Match EN COURS.
+           ACTION: Cherche "Score en direct ${match.homeTeam} ${match.awayTeam}".
+           ⚠️ ATTENTION: Ne confonds PAS "Pronostic" (2-1) avec "Score Actuel" (0-0).
+           SI TU TROUVES UN PRONOSTIC MAIS PAS DE SCORE LIVE CONFIRMÉ, METS "0-0" ou "N/A" DANS LE SCORE. NE METS JAMAIS UN PRONOSTIC COMME SCORE.` 
+        : `PRÉ-MATCH: Cherche infos blessures, stats avancées.`;
+
+    const searchContext = match.sport === SportType.BASKETBALL 
+        ? `"NBA score live ${match.homeTeam} ${match.awayTeam}", "Positive Residual"` 
+        : `"Live score exact ${match.homeTeam} ${match.awayTeam} maintenant", "Understat xG"`;
 
     const judgePrompt = `
-        ${rolePrompt}
-        ${contextPrompt}
+        RÔLE: Analyste Quantitatif. MATCH: ${match.homeTeam} vs ${match.awayTeam}.
+        STATUT: ${isLiveMatch ? "EN DIRECT" : "A VENIR"}.
         LANGUE: FRANÇAIS.
         
-        PROTOCOLE DE PENSÉE (CHAIN OF THOUGHT) REQUIS.
-        
-        ${smartDataInstructions}
-        INFO DIFFUSION: Trouve la chaîne TV française qui diffuse le match (ex: BeIN, Canal, Amazon, etc).
-        
-        RÈGLES CRITIQUES:
-        1. Cotes: Chercher les vraies cotes (Winamax/ParionsSport). Si introuvable => METTRE 0. INTERDIT D'INVENTER.
-        2. Si LIVE: Tu DOIS remplir "liveScore" (ex: "1-1") et "matchMinute" (ex: "54'").
-        3. Si LIVE: La stratégie "liveStrategy" doit être une action immédiate basée sur le jeu en cours.
+        ${instructions}
+        ${oddsContext}
 
-        STRUCTURE DES PRONOSTICS (3 Requis):
-        1. "Main": Le pari principal.
-        2. "Safety": Pari sécurité.
-        3. "Prop": Performance joueur.
+        ÉTAPE 1 (SEARCH): ${searchContext}.
+        ÉTAPE 2 (THINKING): "reasoning_trace". Vérifie doublement le score si Live.
+        ÉTAPE 3 (JSON): Rapport final.
 
-        FORMAT DE SORTIE: JSON PUR.
-        LE PREMIER CHAMP DOIT ÊTRE "reasoning_trace".
+        RÈGLES:
+        - DUEL: Trouve un duel de joueurs clé.
+        - SCORE LIVE: Si incertain, mets "". Ne jamais inventer.
 
-        STRUCTURE JSON ATTENDUE:
+        FORMAT JSON:
         {
-            "reasoning_trace": "Etape 1: Check Live Score... Trouvé 1-0 à la 20ème... Etape 2: Analyse dynamique...",
+            "reasoning_trace": "...",
             "matchId": "${match.id}",
-            "summary": "Analyse détaillée (Live commentary si match en cours)...",
-            "predictions": [
-                { "betType": "Vainqueur", "selection": "Lakers", "odds": 1.85, "confidence": 80, "units": 1, "reasoning": "...", "edge": 4.5 }
-            ],
-            "injuries": ["Joueur X (Out)"],
-            "keyFactors": ["Facteur Clé 1"],
-            "scenarios": [
-                 { "condition": "But rapide", "outcome": "Over 2.5", "likelihood": "Haute", "reasoning": "..." }
-            ],
-            "advancedStats": [
-                 { "label": "xG", "homeValue": "1.2", "awayValue": "0.8", "advantage": "home" }
-            ],
-            "simulationInputs": {
-                "homeAttack": 80, "homeDefense": 70, "awayAttack": 75, "awayDefense": 65, "tempo": 50
-            },
-            "liveStrategy": {
-                "triggerTime": "Immédiat", "condition": "Si score reste 1-0", "action": "Back Home", "targetOdds": 1.5, "rationale": "..."
-            },
-            "liveScore": "1-0",
-            "matchMinute": "23'",
-            "weather": "Clair",
-            "referee": "Nom",
-            "tvChannel": "BeIN Sports 1"
+            "keyDuel": { "player1": "...", "player2": "...", "statLabel": "...", "value1": 0, "value2": 0, "winner": "player1" },
+            "summary": "...",
+            "predictions": [{ "betType": "Vainqueur", "selection": "...", "odds": 0, "confidence": 80, "units": 1, "reasoning": "...", "edge": 0 }],
+            "liveScore": "", "matchMinute": "",
+            "injuries": [], "keyFactors": [], "scenarios": [], "advancedStats": [],
+            "simulationInputs": { "homeAttack": 50, "homeDefense": 50, "awayAttack": 50, "awayDefense": 50, "tempo": 50 },
+            "liveStrategy": { "triggerTime": "", "condition": "", "action": "", "targetOdds": 0, "rationale": "" }
         }
     `;
 
-    try {
+    return withRetry(async () => {
         const response = await ai.models.generateContent({
             model: "gemini-3-pro-preview",
             contents: judgePrompt,
-            config: { 
-                tools: [{ googleSearch: {} }],
-            }
+            config: { tools: [{ googleSearch: {} }] }
         });
 
-        // Manual parsing
-        const data = cleanAndParseJSON(response.text || "{}");
-        
-        // 3. ENRICHISSEMENT (Monte Carlo Local)
-        if (data.simulationInputs) {
-            data.monteCarlo = runMonteCarlo(data.simulationInputs, match.sport);
-        }
+        const rawJson = cleanAndParseJSON(response.text || "{}");
+        // Cast to MatchAnalysis to avoid "Property 'monteCarlo' does not exist" error,
+        // as monteCarlo is not in the Zod schema but is present in the MatchAnalysis interface.
+        const verifiedData = AnalysisSchema.parse(rawJson) as MatchAnalysis;
 
-        // Fill missing ID
-        data.matchId = match.id;
+        if (verifiedData.simulationInputs) verifiedData.monteCarlo = runMonteCarlo(verifiedData.simulationInputs, match.sport);
+        verifiedData.matchId = match.id;
 
-        // Persist to Supabase if available
         if (isSupabaseConfigured()) {
-            supabase!.from('match_analyses').upsert(
-                { match_id: match.id, analysis: data, updated_at: new Date().toISOString() }, 
-                { onConflict: 'match_id' }
-            ).then(() => {});
+            supabase!.from('match_analyses').upsert({ match_id: match.id, analysis: verifiedData, updated_at: new Date().toISOString() }, { onConflict: 'match_id' }).then(() => {});
         }
-
-        return data as MatchAnalysis;
-
-    } catch (error) {
-        console.error("Deep Analysis Failed:", error);
-        throw error;
-    }
+        return verifiedData as MatchAnalysis;
+    }, 2);
 };

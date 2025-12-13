@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 
 interface TypewriterProps {
@@ -9,14 +9,18 @@ interface TypewriterProps {
 
 export const Typewriter: React.FC<TypewriterProps> = ({ text, speed = 15, className }) => {
   const [displayedText, setDisplayedText] = useState('');
+  const indexRef = useRef(0); // Utilisation d'une Ref pour garantir la stabilité de l'index
 
   useEffect(() => {
-    let i = 0;
+    // Reset complet au changement de texte
+    indexRef.current = 0;
     setDisplayedText('');
+
     const timer = setInterval(() => {
-      if (i < text.length) {
-        setDisplayedText((prev) => prev + text.charAt(i));
-        i++;
+      if (indexRef.current < text.length) {
+        const char = text.charAt(indexRef.current);
+        setDisplayedText((prev) => prev + char);
+        indexRef.current++;
       } else {
         clearInterval(timer);
       }
@@ -28,10 +32,11 @@ export const Typewriter: React.FC<TypewriterProps> = ({ text, speed = 15, classN
   return (
     <div className={className}>
       {displayedText}
+      {/* Curseur en BLEU maintenant */}
       <motion.span
         animate={{ opacity: [0, 1, 0] }}
         transition={{ repeat: Infinity, duration: 0.8 }}
-        className="inline-block w-2 h-4 bg-emerald-500 ml-1 align-middle"
+        className="inline-block w-2 h-4 bg-blue-500 ml-1 align-middle"
       />
     </div>
   );

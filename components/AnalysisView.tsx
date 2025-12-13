@@ -1,13 +1,14 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import html2canvas from 'html2canvas';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Match, MatchAnalysis } from '../types';
 import { PredictionCard } from './analysis/PredictionCard';
 import { MonteCarloChart } from './analysis/MonteCarloChart';
 import { LiveStrategyCard } from './analysis/LiveStrategyCard';
 import { ScenarioList } from './analysis/ScenarioList';
 import { AdvancedStats } from './analysis/AdvancedStats';
+import { KeyDuelCard } from './analysis/KeyDuelCard';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 import { Typewriter } from './ui/Typewriter';
 
@@ -37,6 +38,28 @@ const itemVariants = {
 export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loading, onRefresh }) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const [isExporting, setIsExporting] = useState(false);
+  
+  // --- NARRATIVE LOADER STATE ---
+  const [loadingStep, setLoadingStep] = useState(0);
+  const loadingSteps = [
+    "Connexion au flux live (Sources: Opta, Twitter, ESPN)...",
+    "Scan des compositions d'équipes et blessures...",
+    "Recherche des cotes en direct (Market Scanning)...",
+    "Exécution des modèles Monte Carlo (10,000 simulations)...",
+    "Détection des anomalies de marché (Value Bets)...",
+    "Finalisation du rapport stratégique..."
+  ];
+
+  useEffect(() => {
+    if (!loading) {
+        setLoadingStep(0);
+        return;
+    }
+    const interval = setInterval(() => {
+      setLoadingStep((prev) => (prev < loadingSteps.length - 1 ? prev + 1 : prev));
+    }, 2500); // Change le texte toutes les 2.5s
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const handleExport = async () => {
     if (!contentRef.current) return;
@@ -64,14 +87,46 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
   };
   
   if (loading && !analysis) {
+    const progressPercentage = ((loadingStep + 1) / loadingSteps.length) * 100;
+
     return (
-      <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-[#050505]">
-        <div className="relative w-24 h-24 mb-8">
-            <div className="absolute inset-0 border-t-2 border-white/20 rounded-full animate-spin"></div>
-            <div className="absolute inset-2 border-r-2 border-emerald-500/50 rounded-full animate-spin reverse"></div>
+      <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-[#050505] relative overflow-hidden">
+        {/* Abstract Background Animation */}
+        <div className="absolute inset-0 z-0 opacity-20">
+             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-blue-500/20 rounded-full blur-[100px] animate-pulse"></div>
         </div>
-        <Typewriter text="Initialisation des protocoles Quant..." className="text-emerald-500 font-mono text-sm mb-2" speed={30} />
-        <p className="text-white/30 text-xs tracking-widest uppercase">Analyse Positive Residual & Opta en cours</p>
+
+        <div className="relative z-10 w-full max-w-md flex flex-col items-center">
+            <div className="relative w-20 h-20 mb-8">
+                <div className="absolute inset-0 border-2 border-white/10 rounded-full"></div>
+                <div className="absolute inset-0 border-t-2 border-blue-500 rounded-full animate-spin"></div>
+                <div className="absolute inset-0 flex items-center justify-center font-mono text-xs font-bold text-blue-500">
+                    {Math.round(progressPercentage)}%
+                </div>
+            </div>
+            
+            <div className="h-8 mb-2">
+                 <AnimatePresence mode='wait'>
+                    <motion.p
+                        key={loadingStep}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="text-blue-400 font-mono text-sm tracking-wide"
+                    >
+                        {">"} {loadingSteps[loadingStep]}
+                    </motion.p>
+                 </AnimatePresence>
+            </div>
+            
+            {/* Fake Terminal Log */}
+            <div className="w-full h-24 mt-8 bg-black/40 border border-white/5 rounded-lg p-3 overflow-hidden text-left flex flex-col-reverse">
+                 <p className="text-[10px] text-white/20 font-mono">System ready...</p>
+                 <p className="text-[10px] text-white/30 font-mono">Accessing node: {match.id.substring(0,8)}...</p>
+                 <p className="text-[10px] text-white/40 font-mono">Analyzing matchups: {match.homeTeam} vs {match.awayTeam}</p>
+                 <p className="text-[10px] text-blue-500/50 font-mono animate-pulse">{loadingSteps[loadingStep]}</p>
+            </div>
+        </div>
       </div>
     );
   }
@@ -110,7 +165,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
         {loading && (
              <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm rounded-[3rem] flex items-center justify-center">
                  <div className="flex flex-col items-center">
-                     <span className="text-emerald-500 text-xs uppercase tracking-widest animate-pulse">Mise à jour Live...</span>
+                     <span className="text-blue-500 text-xs uppercase tracking-widest animate-pulse">Mise à jour Live...</span>
                  </div>
              </div>
         )}
@@ -185,9 +240,18 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
              <ScenarioList scenarios={analysis.scenarios} />
           </motion.div>
           
-          <motion.div variants={itemVariants} className="lg:col-span-4">
-            <AdvancedStats stats={analysis.advancedStats} />
-          </motion.div>
+          {/* LIGNE STATS : Duel + Advanced Stats */}
+          <div className="lg:col-span-6 grid grid-cols-1 lg:grid-cols-6 gap-4 md:gap-6">
+              {analysis.keyDuel && (
+                  <motion.div variants={itemVariants} className="lg:col-span-2">
+                    <KeyDuelCard duel={analysis.keyDuel} />
+                  </motion.div>
+              )}
+              
+              <motion.div variants={itemVariants} className={analysis.keyDuel ? "lg:col-span-4" : "lg:col-span-6"}>
+                  <AdvancedStats stats={analysis.advancedStats} />
+              </motion.div>
+          </div>
 
            {/* INFO BLOCK (Injuries, Ref, Weather) */}
            <motion.div variants={itemVariants} className="lg:col-span-2 bg-white/[0.02] border border-white/5 rounded-[2rem] p-6 md:p-8">
@@ -214,15 +278,16 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
 
           {/* SUMMARY - TERMINAL STYLE */}
           <motion.div variants={itemVariants} className="lg:col-span-6 bg-[#121212] border border-white/5 rounded-[2rem] p-6 md:p-8 relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-blue-500 opacity-20"></div>
-              <h3 className="text-emerald-400 text-[10px] uppercase font-bold tracking-widest mb-4 font-mono">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-600 to-indigo-600 opacity-20"></div>
+              <h3 className="text-blue-400 text-[10px] uppercase font-bold tracking-widest mb-4 font-mono">
                   > SYSTEM_OUTPUT_SUMMARY
               </h3>
               <div className="prose prose-invert prose-sm max-w-none text-white/80 leading-relaxed font-mono">
                   {/* Utilisation du Typewriter au lieu de ReactMarkdown pour l'effet Terminal */}
                   {/* On clean le markdown basique pour l'affichage brut style terminal */}
                   <Typewriter 
-                    text={analysis.summary.replace(/\*\*/g, '').replace(/###/g, '> ')} 
+                    // Ajout du .trim() pour supprimer tout espace/saut de ligne parasite au début
+                    text={analysis.summary.replace(/\*\*/g, '').replace(/###/g, '> ').trim()} 
                     speed={10} 
                   />
               </div>

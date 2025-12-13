@@ -13,7 +13,7 @@ const ConsensusBar = ({ judgeConf, contrarianIntensity }: { judgeConf: number, c
                 <span>Tension Contrarian</span>
             </div>
             <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden flex">
-                <div style={{ width: `${greenPart}%` }} className="h-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
+                <div style={{ width: `${greenPart}%` }} className="h-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>
                 <div style={{ width: `${redPart}%` }} className="h-full bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.5)]"></div>
             </div>
         </div>
@@ -34,7 +34,7 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
     const strokeDashoffset = circumference - (mainConf / 100) * circumference;
 
     const getConfidenceColor = (score: number) => {
-        if (score >= 80) return 'text-emerald-400 stroke-emerald-500';
+        if (score >= 80) return 'text-blue-400 stroke-blue-500';
         if (score >= 60) return 'text-yellow-400 stroke-yellow-500';
         return 'text-red-400 stroke-red-500';
     };
@@ -47,8 +47,8 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
     return (
         <div className="lg:col-span-4 lg:row-span-2 flex flex-col gap-4">
             {/* MAIN HERO CARD */}
-            <div className="flex-1 bg-gradient-to-br from-[#111] to-[#0a0a0a] border border-emerald-500/20 rounded-[2rem] p-1 shadow-2xl relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-[80px] -mr-20 -mt-20 pointer-events-none"></div>
+            <div className="flex-1 bg-gradient-to-br from-[#111] to-[#0a0a0a] border border-blue-500/20 rounded-[2rem] p-1 shadow-2xl relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-[80px] -mr-20 -mt-20 pointer-events-none"></div>
                 
                 <div className="h-full bg-[#121212]/90 backdrop-blur-sm rounded-[1.8rem] p-6 md:p-8 flex flex-col justify-between relative z-10">
                     
@@ -75,11 +75,11 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
 
                     <div>
                         <div className="flex flex-wrap items-center gap-3 mb-6">
-                            <span className="px-3 py-1 rounded-lg bg-emerald-600 text-white text-xs font-bold uppercase tracking-wide shadow-[0_0_15px_rgba(16,185,129,0.4)]">
+                            <span className="px-3 py-1 rounded-lg bg-blue-600 text-white text-xs font-bold uppercase tracking-wide shadow-[0_0_15px_rgba(37,99,235,0.4)]">
                                 {mainPrediction?.betType || 'Verdict Juge'}
                             </span>
                             {mainPrediction?.edge !== undefined && (
-                                <span className={`px-2 py-1 rounded bg-white/10 border border-white/10 text-[10px] font-bold uppercase tracking-widest ${mainPrediction.edge > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                <span className={`px-2 py-1 rounded bg-white/10 border border-white/10 text-[10px] font-bold uppercase tracking-widest ${mainPrediction.edge > 0 ? 'text-blue-400' : 'text-red-400'}`}>
                                     Edge {mainPrediction.edge > 0 ? '+' : ''}{mainPrediction.edge.toFixed(1)}%
                                 </span>
                             )}
@@ -92,7 +92,7 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
                                 </div>
                                 <div className="flex items-baseline gap-4 mb-4">
                                     {mainPrediction.odds > 0 ? (
-                                        <span className="text-5xl md:text-6xl font-display font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-200 tracking-tighter">
+                                        <span className="text-5xl md:text-6xl font-display font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-200 tracking-tighter">
                                             {Number(mainPrediction.odds).toFixed(2)}
                                         </span>
                                     ) : (
@@ -114,7 +114,7 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
                                     </div>
                                 </div>
 
-                                <p className="text-sm md:text-base text-white/70 italic border-l-2 border-emerald-500/30 pl-4 py-1 leading-relaxed max-w-2xl">
+                                <p className="text-sm md:text-base text-white/70 italic border-l-2 border-blue-500/30 pl-4 py-1 leading-relaxed max-w-2xl">
                                     "{mainPrediction.reasoning}"
                                 </p>
                                 
@@ -156,7 +156,7 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
                                     </div>
                                     <div className="flex flex-col items-end">
                                         {pred.odds > 0 ? (
-                                            <span className="text-lg font-bold font-mono text-emerald-400">{pred.odds.toFixed(2)}</span>
+                                            <span className="text-lg font-bold font-mono text-blue-400">{pred.odds.toFixed(2)}</span>
                                         ) : (
                                             <span className="text-xs text-white/20 font-mono">--</span>
                                         )}
