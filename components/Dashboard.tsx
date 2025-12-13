@@ -34,18 +34,29 @@ export const Dashboard = () => {
   const [activeTab, setActiveTab] = useState<TabType>('All');
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   
-  // React Query avec auto-refresh toutes les 2 minutes pour garder les cotes à jour
+  // 1. GESTION INTELLIGENTE DU REFRESH LISTE
   const { data: matches = [], isLoading: loadingMatches, refetch: refetchMatches, isRefetching } = useQuery({
     queryKey: ['matches', activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'],
     queryFn: () => fetchDailyMatches(activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'),
-    refetchInterval: 1000 * 120, // Refresh auto toutes les 2 min
+    // PAUSE CRITIQUE : Si 'selectedMatch' existe (analyse ouverte), on coupe le rafraîchissement auto (false)
+    refetchInterval: selectedMatch ? false : 1000 * 120, // Sinon toutes les 2 minutes
+    // On empêche aussi le rafraîchissement au focus si on est en train d'analyser
+    refetchOnWindowFocus: !selectedMatch, 
   });
 
-  const { data: analysis = null, isLoading: loadingAnalysis, refetch: refetchAnalysis } = useQuery({
+  // 2. GESTION DE L'ANALYSE (SANS DOUBLE RETRY)
+  const { 
+    data: analysis = null, 
+    isLoading: loadingAnalysis, 
+    isError, 
+    error,
+    refetch: refetchAnalysis 
+  } = useQuery({
     queryKey: ['analysis', selectedMatch?.id],
     queryFn: () => selectedMatch ? analyzeMatchDeeply(selectedMatch) : Promise.reject('No match'),
     enabled: !!selectedMatch,
-    staleTime: 1000 * 60 * 60, 
+    staleTime: 1000 * 60 * 60,
+    retry: false, // IMPORTANT : On laisse geminiService gérer ses propres retries (plus rapide)
   });
 
   const handleMatchSelect = (match: Match) => {
@@ -172,6 +183,7 @@ export const Dashboard = () => {
                         match={selectedMatch} 
                         analysis={analysis} 
                         loading={loadingAnalysis} 
+                        error={isError ? (error as Error) : null}
                         onClose={closeAnalysis}
                         onRefresh={() => refetchAnalysis()} 
                     />

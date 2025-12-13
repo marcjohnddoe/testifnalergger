@@ -16,6 +16,7 @@ interface AnalysisViewProps {
   match: Match;
   analysis: MatchAnalysis | null;
   loading: boolean;
+  error?: Error | null;
   onClose: () => void;
   onRefresh: () => void;
 }
@@ -35,7 +36,7 @@ const itemVariants = {
   visible: { y: 0, opacity: 1 }
 };
 
-export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loading, onRefresh }) => {
+export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loading, error, onRefresh }) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const [isExporting, setIsExporting] = useState(false);
   
@@ -85,6 +86,19 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
       setIsExporting(false);
     }
   };
+
+  if (error) {
+    return (
+        <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-[#050505] relative overflow-hidden">
+            <div className="text-4xl mb-4">⚠️</div>
+            <h3 className="text-white font-bold mb-2">Erreur d'analyse</h3>
+            <p className="text-white/50 mb-6 text-sm max-w-md">{error.message || "L'IA n'a pas pu analyser ce match (Timeout ou Erreur API)."}</p>
+            <button onClick={onRefresh} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-full text-white text-sm font-bold transition-colors shadow-lg">
+                Réessayer l'analyse
+            </button>
+        </div>
+    );
+  }
   
   if (loading && !analysis) {
     const progressPercentage = ((loadingStep + 1) / loadingSteps.length) * 100;
