@@ -236,11 +236,11 @@ async function fetchFromGeminiScraper(category: string): Promise<Match[]> {
                 time: m.time || "00:00", // "00:00" est maintenant géré par le dashboard
                 date: m.date || todayShort,
                 sport: (m.league?.includes('NBA') || m.sport === 'Basketball') ? SportType.BASKETBALL : SportType.FOOTBALL,
-                status: 'scheduled' as const,
+                status: 'scheduled',
                 quickPrediction: "IA", quickConfidence: 0, quickOdds: Number(m.quickOdds) || 0,
                 isTrending: false
             };
-        }).filter((m: any) => m !== null) as Match[]; // <--- TRES IMPORTANT : Retire les éléments nulls et cast
+        }).filter(Boolean) as Match[]; // <--- TRES IMPORTANT : Retire les éléments nulls
     });
 }
 
