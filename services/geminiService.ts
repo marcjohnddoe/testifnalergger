@@ -249,31 +249,39 @@ const mapApiBasketballToMatch = (m: any, dateShort: string): Match => {
 async function fetchFromGeminiScraper(category: string): Promise<Match[]> {
     const ai = getClient();
     const { full: todayFull, displayDate: todayShort } = getParisDateParts(0);
+    const { displayDate: tomorrowShort } = getParisDateParts(1); // On récupère la date de demain
     const currentTime = getCurrentParisTime();
     
     let promptContext = "";
     let searchQuery = "";
     
     if (category === 'Basketball' || category === 'NBA') {
-        promptContext = `FOCUS: NBA & Basket.`;
-        searchQuery = `"NBA schedule today" "Euroleague games today"`;
+        // FIX : On demande spécifiquement la nuit prochaine pour éviter le vide
+        promptContext = `FOCUS: NBA. Cherche les matchs de la nuit du ${todayShort} au ${tomorrowShort}.`;
+        searchQuery = `"NBA schedule ${todayShort}" "NBA schedule ${tomorrowShort}" "Matchs NBA ce soir heure française"`;
     } else if (category === 'Football') {
         promptContext = `FOCUS: Football.`;
-        searchQuery = `"Matchs foot aujourd'hui" "Live scores football"`;
+        searchQuery = `"Matchs foot ${todayShort}" "Programme TV foot ce soir"`;
     } else {
         promptContext = `FOCUS: Top Matchs Foot & NBA.`;
-        searchQuery = `"Matchs ce soir foot nba"`;
+        searchQuery = `"Matchs ce soir ${todayShort}"`;
     }
 
     const prompt = `
       RÔLE: SCRAPER PROGRAMME SPORTIF.
-      DATE: ${todayFull}. HEURE: ${currentTime}.
-      MISSION: Liste les matchs importants du jour.
+      DATE ACTUELLE: ${todayFull} (Heure: ${currentTime}).
+      
+      MISSION: Liste les matchs A VENIR (Ce soir et nuit prochaine).
       RECHERCHE: ${searchQuery}
+      ${promptContext}
+      
+      RÈGLES CRITIQUES:
+      1. NBA : Les matchs de "ce soir" se jouent souvent demain matin (ex: 02h00). INCLUS-LES.
+      2. Dates : Utilise le format JJ/MM (ex: ${todayShort} ou ${tomorrowShort}).
       
       FORMAT JSON STRICT:
       [
-        { "homeTeam": "Lakers", "awayTeam": "Suns", "league": "NBA", "time": "04:00", "date": "${todayShort}", "sport": "Basketball", "quickOdds": 1.90 }
+        { "homeTeam": "Lakers", "awayTeam": "Suns", "league": "NBA", "time": "04:00", "date": "${tomorrowShort}", "sport": "Basketball", "quickOdds": 1.90 }
       ]
     `;
 
@@ -286,65 +294,121 @@ async function fetchFromGeminiScraper(category: string): Promise<Match[]> {
         const rawData = cleanAndParseJSON(response.text || "[]");
         if (!Array.isArray(rawData)) return [];
         
-        return rawData.map((m: any) => ({
-            id: `${m.homeTeam}-${m.awayTeam}`.replace(/\s+/g, '-').toLowerCase(),
-            homeTeam: m.homeTeam, awayTeam: m.awayTeam, league: m.league || "Ligue",
-            time: m.time || "00:00", date: m.date || todayShort,
-            sport: (m.league?.includes('NBA') || m.sport === 'Basketball') ? SportType.BASKETBALL : SportType.FOOTBALL,
-            status: 'scheduled',
-            quickPrediction: "IA", quickConfidence: 0, quickOdds: Number(m.quickOdds) || 0,
-            isTrending: false
-        }));
+        return rawData.map((m: any) => {
+            // ID Normalisé : Suppression accents, espaces, caractères spéciaux pour un ID unique stable
+            // Cela empêche que l'ID change si le format de date ou le nom varie légèrement
+            const cleanName = (str: string) => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+            const stableId = `${cleanName(m.homeTeam)}-${cleanName(m.awayTeam)}`;
+            
+            return {
+                id: stableId,
+                homeTeam: m.homeTeam, awayTeam: m.awayTeam, league: m.league || "Ligue",
+                time: m.time || "00:00", date: m.date || todayShort,
+                sport: (m.league?.includes('NBA') || m.sport === 'Basketball') ? SportType.BASKETBALL : SportType.FOOTBALL,
+                status: 'scheduled',
+                quickPrediction: "IA", quickConfidence: 0, quickOdds: Number(m.quickOdds) || 0,
+                isTrending: false
+            };
+        });
     });
 }
 
-// --- ANALYSE DEEP (PROP HUNTER & PANIC INDEX INTEGRATED) ---
+// --- ANALYSE DEEP (MODE "HEDGE FUND" - ANTI-PARESSE) ---
 export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> => {
+    
+    // 1. CACHE CHECK (Source de Vérité Unique)
+    if (isSupabaseConfigured()) {
+        try {
+            const { data } = await supabase!
+                .from('match_analyses')
+                .select('analysis')
+                .eq('match_id', match.id)
+                .single();
+            if (data?.analysis) return data.analysis as MatchAnalysis;
+        } catch (e) { /* Ignore cache miss */ }
+    }
+
+    // 2. GÉNÉRATION
     const ai = getClient();
     const isLiveMatch = match.status === 'live';
-    
+    const { full: currentDate } = getParisDateParts(0); // On donne la date pour forcer des stats récentes
+
+    // CONTEXTE SPORTIF PRÉCIS
+    const sportContext = match.sport === SportType.BASKETBALL 
+        ? "Basket NBA/Euroleague. Marchés: Moneyline, Spread (Handicap), Total Points, Player Props (Points, Rebonds, Passes)."
+        : "Football. Marchés: 1N2, Double Chance, Total Buts, Buteurs, Corners.";
+
+    // RECHERCHES GOOGLE CHIRURGICALES
+    // On force l'IA à chercher des termes très spécifiques pour éviter le baratin
+    const searchQueries = match.sport === SportType.BASKETBALL 
+        ? `"${match.homeTeam} vs ${match.awayTeam} injuries official report ${currentDate}" "${match.homeTeam} ${match.awayTeam} player prop picks" "${match.homeTeam} vs ${match.awayTeam} advanced stats pace defensive rating"`
+        : `"${match.homeTeam} ${match.awayTeam} blessures officielles compo" "${match.homeTeam} ${match.awayTeam} stats xG understat" "${match.homeTeam} ${match.awayTeam} pronostic buteur value"`;
+
     const judgePrompt = `
-        RÔLE: Analyste Sportif Pro (Hedge Fund).
+        RÔLE: Analyste Sportif Senior pour un Hedge Fund (Rigueur Mathématique).
+        SPORT: ${sportContext}
         MATCH: ${match.homeTeam} vs ${match.awayTeam}.
+        DATE: ${currentDate}.
         STATUT: ${isLiveMatch ? "LIVE" : "PRÉ-MATCH"}.
         
-        INSTRUCTION: Analyse ce match en profondeur avec un focus sur les Props Joueurs et la psychologie de foule.
+        MISSION: Analyse ce match sans complaisance. Interdiction d'être vague.
         
-        RECHERCHE GOOGLE: "${match.homeTeam} ${match.awayTeam} stats player props injuries twitter sentiment"
+        RECHERCHE EFFECTUÉE SUR: ${searchQueries}
 
-        FORMAT JSON ATTENDU (Respecte scrupuleusement):
+        RÈGLES D'OR (ANTI-PARESSE):
+        1. ARGUMENTATION CHIFFRÉE: Ne dis pas "bonne attaque". Dis "Offensive Rating 118.5 (2ème NBA)".
+        2. BLESSURES: Vérifie chaque joueur clé. Si incertain, précise l'impact tactique. Ne mets JAMAIS "RAS" sans avoir vérifié 3 sources.
+        3. PROPS INTELLIGENTS: Ne propose pas juste les superstars. Cherche de la "Value" sur les lieutenants (ex: un pivot qui prend plus de rebonds car l'adversaire est petit).
+        4. SENTIMENT: Scanne le "bruit" social. Est-ce que les fans sont en colère ? Y a-t-il une "hype" irrationnelle ?
+
+        FORMAT JSON STRICT ATTENDU:
         {
             "matchId": "${match.id}",
-            "summary": "Résumé concis...",
-            "predictions": [{ "betType": "Vainqueur", "selection": "${match.homeTeam}", "odds": 1.80, "confidence": 75, "units": 1, "reasoning": "..." }],
-            "keyDuel": { "player1": "J1", "player2": "J2", "statLabel": "Pts", "value1": 20, "value2": 25, "winner": "player2" },
-            "scenarios": ["Si A marque, alors...", "Si rythme lent..."],
-            "advancedStats": ["Possession: 60%", "xG: 1.2 vs 0.8"],
-            "simulationInputs": { "homeAttack": 60, "homeDefense": 50, "awayAttack": 55, "awayDefense": 45, "tempo": 50 },
-            "liveStrategy": { "triggerTime": "MT", "condition": "Nul", "action": "Miser", "targetOdds": 3.0, "rationale": "Value" },
-            
-            "playerProps": [
-                { "player": "Nom Joueur", "market": "Points/Buts", "line": "Over 19.5", "odds": 1.85, "confidence": 80 },
-                { "player": "Autre Joueur", "market": "Passes D.", "line": "Over 5.5", "odds": 2.10, "confidence": 65 },
-                { "player": "Joueur 3", "market": "Tirs", "line": "Over 2.5", "odds": 1.70, "confidence": 70 }
+            "summary": "Résumé percutant en 2 phrases avec le facteur clé (ex: fatigue, matchup spécifique).",
+            "predictions": [
+                { "betType": "Principal", "selection": "Sélection Précise", "odds": 1.75, "confidence": 80, "units": 2, "reasoning": "Argumentaire basé sur une stat clé (ex: Domicile 15-2)." },
+                { "betType": "Value / Handicap", "selection": "Sélection", "odds": 1.90, "confidence": 65, "units": 1, "reasoning": "Pourquoi le marché se trompe ici ?" },
+                { "betType": "Statistique / Total", "selection": "Sélection", "odds": 1.85, "confidence": 70, "units": 1, "reasoning": "Basé sur le Pace/xG récent." }
             ],
+            "playerProps": [
+                { "player": "Joueur A", "market": "Pts/Reb/Ast", "line": "Over 20.5", "odds": 1.85, "confidence": 75 },
+                { "player": "Joueur B (Outsider)", "market": "Stat précise", "line": "Over/Under X", "odds": 2.00, "confidence": 60 },
+                { "player": "Joueur C", "market": "Stat précise", "line": "Over/Under Y", "odds": 1.70, "confidence": 70 }
+            ],
+            "keyDuel": { "player1": "Nom A", "player2": "Nom B", "statLabel": "Moyenne Pts/Buts", "value1": 25.5, "value2": 28.0, "winner": "player2" },
+            "scenarios": [
+                "Si [Joueur X] prend rapidement des fautes, alors viser [Remplaçant Y].",
+                "Si l'écart dépasse 15 pts, viser l'Under (Blowout probable)."
+            ],
+            "advancedStats": [
+                { "label": "Pace / Possession", "homeValue": 98.5, "awayValue": 102.1, "advantage": "away" },
+                { "label": "Efficacité Défensive", "homeValue": 110, "awayValue": 115, "advantage": "home" }
+            ],
+            "simulationInputs": { "homeAttack": 75, "homeDefense": 60, "awayAttack": 70, "awayDefense": 65, "tempo": 95 },
+            "liveStrategy": { 
+                "triggerTime": "Mi-temps / QT3", 
+                "condition": "Si le favori perd de 5-8 points", 
+                "action": "Miser Favori en Live", 
+                "targetOdds": 2.10, 
+                "rationale": "L'équipe adverse craque souvent en fin de match (Net Rating Q4 faible)." 
+            },
             "sentiment": { 
-                "score": 30, 
-                "label": "Panique", 
-                "summary": "Le public vend ${match.homeTeam} après la blessure récente." 
+                "score": 40, 
+                "label": "Doute", 
+                "summary": "Les fans craignent l'absence du meneur titulaire." 
             }
         }
-        
-        NOTE:
-        - "sentiment.score": 0 (Panique Totale) à 100 (Euphorie Totale). 50 = Neutre.
-        - "playerProps": Trouve 3 cotes joueurs intéressantes.
     `;
 
     return withRetry(async () => {
         const response = await ai.models.generateContent({
             model: "gemini-3-pro-preview", 
             contents: judgePrompt,
-            config: { tools: [{ googleSearch: {} }] }
+            config: { 
+                tools: [{ googleSearch: {} }],
+                // Température très basse pour la rigueur, mais pas 0 pour laisser un peu de "réflexion" sur les scénarios
+                generationConfig: { temperature: 0.15 } 
+            }
         });
 
         const rawJson = cleanAndParseJSON(response.text || "{}");
@@ -353,6 +417,7 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
         if (safeData.simulationInputs) safeData.monteCarlo = runMonteCarlo(safeData.simulationInputs, match.sport);
         safeData.matchId = match.id;
 
+        // 3. SAUVEGARDE
         if (isSupabaseConfigured()) {
             supabase!.from('match_analyses').upsert({ match_id: match.id, analysis: safeData, updated_at: new Date().toISOString() }, { onConflict: 'match_id' }).then(() => {});
         }

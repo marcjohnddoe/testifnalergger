@@ -8,19 +8,31 @@ import { TicketSlip } from './TicketSlip';
 
 type TabType = 'All' | SportType | 'Trending' | 'Safe' | 'HighOdds' | 'Value';
 
+// Helper local pour filtrer instantanément les vieux matchs
 const isMatchExpiredLocal = (dateStr?: string, timeStr?: string) => {
     if (!dateStr || !timeStr) return false;
     const now = new Date();
-    const [day, month] = dateStr.split('/').map(Number);
+    // Gestion robuste des formats de date (DD/MM ou YYYY-MM-DD)
+    const parts = dateStr.includes('/') ? dateStr.split('/') : dateStr.split('-');
+    const day = Number(parts[0]);
+    const month = Number(parts[1]);
+    
+    if (!day || !month) return false; // Si date illisible, on affiche par sécurité
+
     const cleanTime = timeStr.replace('h', ':');
     const [hour, minute] = cleanTime.split(':').map(Number);
+    
     const matchDate = new Date();
     matchDate.setMonth(month - 1);
     matchDate.setDate(day);
-    matchDate.setHours(hour, minute, 0, 0);
+    matchDate.setHours(hour || 0, minute || 0, 0, 0);
+
+    // Gestion du changement d'année (Décembre -> Janvier)
     if (month === 1 && now.getMonth() === 11) matchDate.setFullYear(now.getFullYear() + 1);
     if (month === 12 && now.getMonth() === 0) matchDate.setFullYear(now.getFullYear() - 1);
-    const expiryTime = new Date(matchDate.getTime() + (150 * 60 * 1000));
+
+    // FIX : Buffer augmenté à 4h (240 min) pour ne jamais cacher un match NBA en cours
+    const expiryTime = new Date(matchDate.getTime() + (240 * 60 * 1000));
     return now > expiryTime;
 };
 
