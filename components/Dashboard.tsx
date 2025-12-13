@@ -38,10 +38,14 @@ export const Dashboard = () => {
   const { data: matches = [], isLoading: loadingMatches, refetch: refetchMatches, isRefetching } = useQuery({
     queryKey: ['matches', activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'],
     queryFn: () => fetchDailyMatches(activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'),
-    // PAUSE CRITIQUE : Si 'selectedMatch' existe (analyse ouverte), on coupe le rafraîchissement auto (false)
-    refetchInterval: selectedMatch ? false : 1000 * 120, // Sinon toutes les 2 minutes
-    // On empêche aussi le rafraîchissement au focus si on est en train d'analyser
-    refetchOnWindowFocus: !selectedMatch, 
+    
+    // LOGIQUE DE PAUSE RENFORCÉE (KILL SWITCH)
+    // Si selectedMatch est actif (analyse ouverte), on met 'enabled: false'
+    // Cela empêche totalement React Query de lancer des requêtes pour la liste.
+    enabled: !selectedMatch, 
+    
+    refetchInterval: 1000 * 120, // Refresh toutes les 2 min quand on est sur la liste
+    refetchOnWindowFocus: false, // Pas de refresh au focus pour éviter de surcharger
   });
 
   // 2. GESTION DE L'ANALYSE (SANS DOUBLE RETRY)
