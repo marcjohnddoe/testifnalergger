@@ -9,6 +9,8 @@ import { LiveStrategyCard } from './analysis/LiveStrategyCard';
 import { ScenarioList } from './analysis/ScenarioList';
 import { AdvancedStats } from './analysis/AdvancedStats';
 import { KeyDuelCard } from './analysis/KeyDuelCard';
+import { PropHunter } from './analysis/PropHunter';
+import { PanicIndex } from './analysis/PanicIndex';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 import { Typewriter } from './ui/Typewriter';
 
@@ -19,6 +21,7 @@ interface AnalysisViewProps {
   error?: Error | null;
   onClose: () => void;
   onRefresh: () => void;
+  onAddToTicket: (item: any) => void; // Nouvelle prop
 }
 
 const containerVariants = {
@@ -36,7 +39,7 @@ const itemVariants = {
   visible: { y: 0, opacity: 1 }
 };
 
-export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loading, error, onRefresh }) => {
+export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loading, error, onRefresh, onAddToTicket }) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const [isExporting, setIsExporting] = useState(false);
   
@@ -133,7 +136,6 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
                  </AnimatePresence>
             </div>
             
-            {/* Fake Terminal Log */}
             <div className="w-full h-24 mt-8 bg-black/40 border border-white/5 rounded-lg p-3 overflow-hidden text-left flex flex-col-reverse">
                  <p className="text-[10px] text-white/20 font-mono">System ready...</p>
                  <p className="text-[10px] text-white/30 font-mono">Accessing node: {match.id.substring(0,8)}...</p>
@@ -207,8 +209,6 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
           {(analysis.liveScore || match.status === 'live') && (
               <div className="mt-6 flex flex-col items-center">
                   <div className="relative px-8 py-4 bg-[#1a1a1a] border border-white/10 rounded-2xl overflow-hidden shadow-[0_0_30px_rgba(239,68,68,0.15)]">
-                      
-                      {/* Live Indicator Background */}
                       {match.status === 'live' && (
                           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-red-500/5 to-transparent animate-pulse"></div>
                       )}
@@ -241,20 +241,26 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 md:gap-6">
           
           <motion.div variants={itemVariants} className="lg:col-span-4 lg:row-span-2">
-            <PredictionCard analysis={analysis} />
+            <PredictionCard analysis={analysis} onAddToTicket={onAddToTicket} matchName={`${match.homeTeam} vs ${match.awayTeam}`} />
           </motion.div>
 
-          {/* SIDE: MONTE CARLO & LIVE SCRIPT */}
+          {/* SIDE: PANIC INDEX & MONTE CARLO */}
           <motion.div variants={itemVariants} className="lg:col-span-2 flex flex-col gap-4">
+              {analysis.sentiment && <PanicIndex sentiment={analysis.sentiment} />}
               <MonteCarloChart monteCarlo={analysis.monteCarlo} />
-              <LiveStrategyCard strategy={analysis.liveStrategy} />
           </motion.div>
+
+          {/* PROP HUNTER */}
+          {analysis.playerProps && analysis.playerProps.length > 0 && (
+              <motion.div variants={itemVariants} className="lg:col-span-6">
+                  <PropHunter props={analysis.playerProps} onAddToTicket={onAddToTicket} />
+              </motion.div>
+          )}
 
           <motion.div variants={itemVariants} className="lg:col-span-6">
              <ScenarioList scenarios={analysis.scenarios} />
           </motion.div>
           
-          {/* LIGNE STATS : Duel + Advanced Stats */}
           <div className="lg:col-span-6 grid grid-cols-1 lg:grid-cols-6 gap-4 md:gap-6">
               {analysis.keyDuel && (
                   <motion.div variants={itemVariants} className="lg:col-span-2">
@@ -267,7 +273,6 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
               </motion.div>
           </div>
 
-           {/* INFO BLOCK (Injuries, Ref, Weather) */}
            <motion.div variants={itemVariants} className="lg:col-span-2 bg-white/[0.02] border border-white/5 rounded-[2rem] p-6 md:p-8">
               <h3 className="text-white/30 text-[10px] uppercase font-bold tracking-widest mb-4">Rapport Miner</h3>
               <div className="space-y-4">
@@ -290,17 +295,13 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ match, analysis, loa
               </div>
           </motion.div>
 
-          {/* SUMMARY - TERMINAL STYLE */}
           <motion.div variants={itemVariants} className="lg:col-span-6 bg-[#121212] border border-white/5 rounded-[2rem] p-6 md:p-8 relative overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-600 to-indigo-600 opacity-20"></div>
               <h3 className="text-blue-400 text-[10px] uppercase font-bold tracking-widest mb-4 font-mono">
                   > SYSTEM_OUTPUT_SUMMARY
               </h3>
               <div className="prose prose-invert prose-sm max-w-none text-white/80 leading-relaxed font-mono">
-                  {/* Utilisation du Typewriter au lieu de ReactMarkdown pour l'effet Terminal */}
-                  {/* On clean le markdown basique pour l'affichage brut style terminal */}
                   <Typewriter 
-                    // Ajout du .trim() pour supprimer tout espace/saut de ligne parasite au début
                     text={analysis.summary.replace(/\*\*/g, '').replace(/###/g, '> ').trim()} 
                     speed={10} 
                   />

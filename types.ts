@@ -108,6 +108,28 @@ export interface KeyDuel {
   winner: 'player1' | 'player2' | 'equal';
 }
 
+// --- PROP HUNTER & PANIC INDEX ---
+export interface PlayerProp {
+  player: string;
+  market: string; // ex: "Points", "Rebonds", "Tirs cadrés"
+  line: string; // ex: "Over 24.5"
+  odds: number;
+  confidence: number;
+}
+
+export interface SentimentAnalysis {
+  score: number; // 0-100 (0=Panic, 100=Greed)
+  label: string; // "Extreme Fear", "Neutral", "Greed"
+  summary: string; // Explication courte
+}
+
+export interface TicketItem {
+  id: string;
+  match: string;
+  selection: string;
+  odds: number;
+}
+
 export interface MatchAnalysis {
   matchId: string;
   reasoning_trace?: string; // LE BROUILLON DE L'IA (Reasoning Trace)
@@ -135,6 +157,8 @@ export interface MatchAnalysis {
   simulationInputs?: SimulationInputs; // Données brutes pour le moteur
   monteCarlo?: MonteCarloResult; // Résultat de la simulation
   liveStrategy?: LiveStrategy; // Plan de bataille live
+  playerProps?: PlayerProp[]; // Nouveau: Prop Hunter
+  sentiment?: SentimentAnalysis; // Nouveau: Panic Index
 }
 
 export interface SearchResultMatch {

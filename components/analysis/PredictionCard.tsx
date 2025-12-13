@@ -20,7 +20,7 @@ const ConsensusBar = ({ judgeConf, contrarianIntensity }: { judgeConf: number, c
     );
 };
 
-export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
+export const PredictionCard = ({ analysis, onAddToTicket, matchName }: { analysis: MatchAnalysis, onAddToTicket: (item: any) => void, matchName: string }) => {
     // Le premier est le MAIN, les autres sont secondaires
     const mainPrediction = analysis.predictions[0];
     const otherPredictions = analysis.predictions.slice(1);
@@ -99,17 +99,26 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
                                         <span className="text-2xl font-mono text-white/30">En attente</span>
                                     )}
                                     <div className="flex gap-2">
-                                        {mainPrediction.units && (
-                                            <div className="flex flex-col items-start px-3 py-1 rounded bg-white/5 border border-white/5">
-                                                <span className="text-[9px] text-white/40 uppercase">Mise</span>
-                                                <span className="text-white font-mono font-bold">{mainPrediction.units}u</span>
-                                            </div>
-                                        )}
+                                        <button 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onAddToTicket({
+                                                    id: `pred-${Date.now()}`,
+                                                    match: matchName,
+                                                    selection: mainPrediction.selection,
+                                                    odds: mainPrediction.odds
+                                                });
+                                            }}
+                                            className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold text-lg leading-none shadow-lg transition-colors"
+                                            title="Ajouter au ticket"
+                                        >
+                                            +
+                                        </button>
                                         <button 
                                         onClick={(e) => copyBet(`${mainPrediction.selection} @ ${mainPrediction.odds}`, e)}
                                         className="px-3 py-1 rounded bg-white/5 border border-white/10 hover:bg-white/10 text-[9px] uppercase tracking-widest text-white/50 hover:text-white transition-colors flex items-center gap-1"
                                         >
-                                            Copy Bet
+                                            Copy
                                         </button>
                                     </div>
                                 </div>
@@ -155,11 +164,23 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
                                         <span className="font-bold text-white text-sm">{pred.selection}</span>
                                     </div>
                                     <div className="flex flex-col items-end">
-                                        {pred.odds > 0 ? (
-                                            <span className="text-lg font-bold font-mono text-blue-400">{pred.odds.toFixed(2)}</span>
-                                        ) : (
-                                            <span className="text-xs text-white/20 font-mono">--</span>
-                                        )}
+                                        <div className="flex items-center gap-2">
+                                            {pred.odds > 0 && <span className="text-lg font-bold font-mono text-blue-400">{pred.odds.toFixed(2)}</span>}
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onAddToTicket({
+                                                        id: `sub-${idx}-${Date.now()}`,
+                                                        match: matchName,
+                                                        selection: pred.selection,
+                                                        odds: pred.odds
+                                                    });
+                                                }}
+                                                className="w-5 h-5 rounded bg-white/10 hover:bg-blue-600 text-white flex items-center justify-center text-xs font-bold"
+                                            >
+                                                +
+                                            </button>
+                                        </div>
                                         <div className="flex items-center gap-1 mt-1">
                                             <div className="w-10 h-1 bg-white/10 rounded-full overflow-hidden">
                                                 <div className="h-full bg-white/50" style={{width: `${pred.confidence}%`}}></div>
@@ -177,10 +198,6 @@ export const PredictionCard = ({ analysis }: { analysis: MatchAnalysis }) => {
                                     {!isExpanded && (
                                         <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-[#111] via-[#111]/80 to-transparent pointer-events-none group-hover:via-[#161616]/80"></div>
                                     )}
-                                </div>
-                                
-                                <div className={`flex justify-center transition-all duration-300 overflow-hidden ${isExpanded ? 'h-4 opacity-100' : 'h-0 opacity-0'}`}>
-                                    <span className="text-[9px] text-white/20 uppercase tracking-widest">Cliquez pour réduire</span>
                                 </div>
                             </div>
                         );

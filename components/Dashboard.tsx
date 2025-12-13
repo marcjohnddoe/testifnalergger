@@ -1,31 +1,25 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchDailyMatches, analyzeMatchDeeply } from '../services/geminiService';
-import { Match, MatchAnalysis, SportType } from '../types';
+import { Match, MatchAnalysis, SportType, TicketItem } from '../types';
 import { MatchCard } from './MatchCard';
 import { AnalysisView } from './AnalysisView';
+import { TicketSlip } from './TicketSlip';
 
 type TabType = 'All' | SportType | 'Trending' | 'Safe' | 'HighOdds' | 'Value';
 
-// Helper local pour filtrer instantanément les vieux matchs (même si le cache API est encore là)
 const isMatchExpiredLocal = (dateStr?: string, timeStr?: string) => {
     if (!dateStr || !timeStr) return false;
     const now = new Date();
-    // On assume que dateStr est "JJ/MM"
     const [day, month] = dateStr.split('/').map(Number);
     const cleanTime = timeStr.replace('h', ':');
     const [hour, minute] = cleanTime.split(':').map(Number);
-    
     const matchDate = new Date();
     matchDate.setMonth(month - 1);
     matchDate.setDate(day);
     matchDate.setHours(hour, minute, 0, 0);
-
-    // Gestion année (Si on est en déc et match en janv)
     if (month === 1 && now.getMonth() === 11) matchDate.setFullYear(now.getFullYear() + 1);
     if (month === 12 && now.getMonth() === 0) matchDate.setFullYear(now.getFullYear() - 1);
-
-    // Buffer de 2h30 (150 min) après le début
     const expiryTime = new Date(matchDate.getTime() + (150 * 60 * 1000));
     return now > expiryTime;
 };
@@ -34,21 +28,28 @@ export const Dashboard = () => {
   const [activeTab, setActiveTab] = useState<TabType>('All');
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   
-  // 1. GESTION INTELLIGENTE DU REFRESH LISTE
+  // TICKET STATE
+  const [ticketItems, setTicketItems] = useState<TicketItem[]>([]);
+
+  const addToTicket = (item: TicketItem) => {
+      // Eviter doublons
+      if (!ticketItems.find(i => i.id === item.id)) {
+          setTicketItems(prev => [...prev, item]);
+      }
+  };
+
+  const removeFromTicket = (id: string) => {
+      setTicketItems(prev => prev.filter(i => i.id !== id));
+  };
+  
   const { data: matches = [], isLoading: loadingMatches, refetch: refetchMatches, isRefetching } = useQuery({
     queryKey: ['matches', activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'],
     queryFn: () => fetchDailyMatches(activeTab === SportType.FOOTBALL || activeTab === SportType.BASKETBALL ? activeTab : 'All'),
-    
-    // LOGIQUE DE PAUSE RENFORCÉE (KILL SWITCH)
-    // Si selectedMatch est actif (analyse ouverte), on met 'enabled: false'
-    // Cela empêche totalement React Query de lancer des requêtes pour la liste.
     enabled: !selectedMatch, 
-    
-    refetchInterval: 1000 * 120, // Refresh toutes les 2 min quand on est sur la liste
-    refetchOnWindowFocus: false, // Pas de refresh au focus pour éviter de surcharger
+    refetchInterval: 1000 * 120,
+    refetchOnWindowFocus: false,
   });
 
-  // 2. GESTION DE L'ANALYSE (SANS DOUBLE RETRY)
   const { 
     data: analysis = null, 
     isLoading: loadingAnalysis, 
@@ -60,7 +61,7 @@ export const Dashboard = () => {
     queryFn: () => selectedMatch ? analyzeMatchDeeply(selectedMatch) : Promise.reject('No match'),
     enabled: !!selectedMatch,
     staleTime: 1000 * 60 * 60,
-    retry: false, // IMPORTANT : On laisse geminiService gérer ses propres retries (plus rapide)
+    retry: false,
   });
 
   const handleMatchSelect = (match: Match) => {
@@ -83,23 +84,17 @@ export const Dashboard = () => {
     { id: SportType.BASKETBALL, label: '🏀 NBA' },
   ];
 
-  // FILTRAGE AVANCÉ
   const filteredMatches = useMemo(() => {
-      // 1. D'abord, on retire les matchs expirés (Nettoyage Client)
       const freshMatches = matches.filter(m => !isMatchExpiredLocal(m.date, m.time));
-
-      // 2. Ensuite on applique les filtres d'onglets
       return freshMatches.filter(m => {
           if (activeTab === 'Trending') return m.isTrending;
           if (activeTab === 'Safe') return (m.quickConfidence || 0) > 70;
           if (activeTab === 'HighOdds') return (m.quickOdds || 0) >= 2.50;
-          
           if (activeTab === 'Value') {
               const prob = (m.quickConfidence || 50) / 100;
               const valueScore = prob * (m.quickOdds || 0);
               return valueScore > 1.1;
           }
-
           if (activeTab === SportType.FOOTBALL) return m.sport === SportType.FOOTBALL;
           if (activeTab === SportType.BASKETBALL) return m.sport === SportType.BASKETBALL;
           return true;
@@ -107,7 +102,7 @@ export const Dashboard = () => {
   }, [matches, activeTab]);
 
   return (
-    <div className="min-h-screen w-full bg-[#050505] relative">
+    <div className="min-h-screen w-full bg-[#050505] relative pb-20"> {/* Padding bottom for ticket */}
       <div className="fixed top-0 left-0 w-full h-[500px] bg-gradient-to-b from-blue-900/10 to-transparent pointer-events-none"></div>
       
       {/* HEADER */}
@@ -190,11 +185,15 @@ export const Dashboard = () => {
                         error={isError ? (error as Error) : null}
                         onClose={closeAnalysis}
                         onRefresh={() => refetchAnalysis()} 
+                        onAddToTicket={addToTicket}
                     />
                 </div>
             </div>
         </div>
       )}
+
+      {/* TICKET SLIP (Floating) */}
+      <TicketSlip items={ticketItems} onRemove={removeFromTicket} />
     </div>
   );
 };

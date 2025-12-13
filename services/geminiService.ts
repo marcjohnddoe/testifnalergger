@@ -101,11 +101,10 @@ const cleanAndParseJSON = (text: string) => {
 const sanitizeData = (data: any) => {
     if (!data) return {};
 
-    // SCENARIOS : L'IA renvoie des strings ["Si A alors B"], on transforme en objets
+    // SCENARIOS
     if (Array.isArray(data.scenarios)) {
         data.scenarios = data.scenarios.map((s: any) => {
             if (typeof s === 'string') {
-                // Découpage intelligent simple
                 const parts = s.split(/,|alors|:|implies/i);
                 return { 
                     condition: parts[0] || s, 
@@ -119,7 +118,28 @@ const sanitizeData = (data: any) => {
         data.scenarios = [];
     }
 
-    // STATS : Idem, si l'IA renvoie des strings, on essaie de parser
+    // PLAYER PROPS (PROP HUNTER)
+    if (Array.isArray(data.playerProps)) {
+        data.playerProps = data.playerProps.map((p: any) => ({
+            player: p.player || "Joueur Inconnu",
+            market: p.market || "Performance",
+            line: p.line || "Over/Under",
+            odds: Number(p.odds) || 0,
+            confidence: Number(p.confidence) || 50
+        }));
+    } else {
+        data.playerProps = [];
+    }
+
+    // SENTIMENT (PANIC INDEX)
+    if (!data.sentiment) {
+        data.sentiment = { score: 50, label: "Neutre", summary: "Pas de signal clair du public." };
+    } else {
+        data.sentiment.score = Number(data.sentiment.score) || 50;
+        data.sentiment.label = data.sentiment.label || "Neutre";
+    }
+
+    // STATS
     if (Array.isArray(data.advancedStats)) {
         data.advancedStats = data.advancedStats.map((s: any) => {
             if (typeof s === 'string') {
@@ -139,7 +159,7 @@ const sanitizeData = (data: any) => {
         data.advancedStats = [];
     }
 
-    // PREDICTIONS : On s'assure que les chiffres sont des chiffres
+    // PREDICTIONS
     if (Array.isArray(data.predictions)) {
         data.predictions = data.predictions.map((p: any) => ({
             betType: p?.betType || "Avis",
@@ -162,7 +182,6 @@ const LEAGUES_ID = {
 };
 
 export const fetchDailyMatches = async (category: string = 'All'): Promise<Match[]> => {
-    // API SPORTS (Priorité)
     if (RAPID_API_KEY && RAPID_API_KEY.length > 5) {
         try { 
             const matches = await fetchFromRealAPI(category);
@@ -171,7 +190,6 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
             console.error("API Error, fallback to AI", e); 
         }
     }
-    // FALLBACK IA (Si pas d'API ou API vide)
     return fetchFromGeminiScraper(category);
 };
 
@@ -180,25 +198,19 @@ async function fetchFromRealAPI(category: string): Promise<Match[]> {
     const headers = { 'x-rapidapi-host': 'v3.football.api-sports.io', 'x-rapidapi-key': RAPID_API_KEY };
     let matches: Match[] = [];
 
-    // Foot
     if (category === 'All' || category === 'Football' || category === SportType.FOOTBALL) {
         const res = await fetch(`https://v3.football.api-sports.io/fixtures?date=${apiDate}`, { headers });
         const json = await res.json();
         if (json.response) {
-            matches = [...matches, ...json.response
-                .filter((m: any) => Object.values(LEAGUES_ID).includes(m.league.id))
-                .map((m: any) => mapApiFootballToMatch(m, displayDate))];
+            matches = [...matches, ...json.response.filter((m: any) => Object.values(LEAGUES_ID).includes(m.league.id)).map((m: any) => mapApiFootballToMatch(m, displayDate))];
         }
     }
-    // Basket
     if (category === 'All' || category === 'Basketball' || category === 'NBA' || category === SportType.BASKETBALL) {
         const basketHeaders = { ...headers, 'x-rapidapi-host': 'v1.basketball.api-sports.io' };
         const res = await fetch(`https://v1.basketball.api-sports.io/games?date=${apiDate}`, { headers: basketHeaders });
         const json = await res.json();
         if (json.response) {
-            matches = [...matches, ...json.response
-                .filter((m: any) => m.league.id === LEAGUES_ID.NBA || m.league.id === LEAGUES_ID.EURO_LEAGUE)
-                .map((m: any) => mapApiBasketballToMatch(m, displayDate))];
+            matches = [...matches, ...json.response.filter((m: any) => m.league.id === LEAGUES_ID.NBA || m.league.id === LEAGUES_ID.EURO_LEAGUE).map((m: any) => mapApiBasketballToMatch(m, displayDate))];
         }
     }
     return matches;
@@ -234,8 +246,6 @@ const mapApiBasketballToMatch = (m: any, dateShort: string): Match => {
     };
 };
 
-// Fallback: Scraper IA si pas de clé API Sports
-// FIX: On retire le filtrage de date strict pour éviter la liste vide
 async function fetchFromGeminiScraper(category: string): Promise<Match[]> {
     const ai = getClient();
     const { full: todayFull, displayDate: todayShort } = getParisDateParts(0);
@@ -285,52 +295,59 @@ async function fetchFromGeminiScraper(category: string): Promise<Match[]> {
             quickPrediction: "IA", quickConfidence: 0, quickOdds: Number(m.quickOdds) || 0,
             isTrending: false
         }));
-        // NOTE: On ne filtre plus par date ici pour garantir l'affichage
     });
 }
 
-// --- ANALYSE DEEP (OPTIMISÉE) ---
+// --- ANALYSE DEEP (PROP HUNTER & PANIC INDEX INTEGRATED) ---
 export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> => {
     const ai = getClient();
     const isLiveMatch = match.status === 'live';
     
-    // Instructions simplifiées pour aider l'IA
-    // On demande des chaînes simples pour éviter les erreurs de syntaxe JSON sur les objets complexes
     const judgePrompt = `
         RÔLE: Analyste Sportif Pro (Hedge Fund).
         MATCH: ${match.homeTeam} vs ${match.awayTeam}.
         STATUT: ${isLiveMatch ? "LIVE" : "PRÉ-MATCH"}.
         
-        INSTRUCTION: Analyse ce match en profondeur.
+        INSTRUCTION: Analyse ce match en profondeur avec un focus sur les Props Joueurs et la psychologie de foule.
         
-        RECHERCHE GOOGLE: "${match.homeTeam} ${match.awayTeam} stats analysis prediction"
+        RECHERCHE GOOGLE: "${match.homeTeam} ${match.awayTeam} stats player props injuries twitter sentiment"
 
         FORMAT JSON ATTENDU (Respecte scrupuleusement):
         {
             "matchId": "${match.id}",
-            "summary": "Résumé de l'analyse...",
-            "predictions": [{ "betType": "Vainqueur", "selection": "${match.homeTeam}", "odds": 1.80, "confidence": 75, "units": 1, "reasoning": "Explication courte." }],
+            "summary": "Résumé concis...",
+            "predictions": [{ "betType": "Vainqueur", "selection": "${match.homeTeam}", "odds": 1.80, "confidence": 75, "units": 1, "reasoning": "..." }],
             "keyDuel": { "player1": "J1", "player2": "J2", "statLabel": "Pts", "value1": 20, "value2": 25, "winner": "player2" },
-            "scenarios": ["Si A marque en premier, alors B...", "Si le match s'accélère, alors over..."],
-            "advancedStats": ["Possession: 60% (Home)", "xG: 1.2 vs 0.8"],
+            "scenarios": ["Si A marque, alors...", "Si rythme lent..."],
+            "advancedStats": ["Possession: 60%", "xG: 1.2 vs 0.8"],
             "simulationInputs": { "homeAttack": 60, "homeDefense": 50, "awayAttack": 55, "awayDefense": 45, "tempo": 50 },
-            "liveStrategy": { "triggerTime": "MT", "condition": "Score paritaire", "action": "Miser nul", "targetOdds": 3.0, "rationale": "Value" }
+            "liveStrategy": { "triggerTime": "MT", "condition": "Nul", "action": "Miser", "targetOdds": 3.0, "rationale": "Value" },
+            
+            "playerProps": [
+                { "player": "Nom Joueur", "market": "Points/Buts", "line": "Over 19.5", "odds": 1.85, "confidence": 80 },
+                { "player": "Autre Joueur", "market": "Passes D.", "line": "Over 5.5", "odds": 2.10, "confidence": 65 },
+                { "player": "Joueur 3", "market": "Tirs", "line": "Over 2.5", "odds": 1.70, "confidence": 70 }
+            ],
+            "sentiment": { 
+                "score": 30, 
+                "label": "Panique", 
+                "summary": "Le public vend ${match.homeTeam} après la blessure récente." 
+            }
         }
         
-        NOTE: Pour 'scenarios' et 'advancedStats', renvoie de simples phrases (Strings), pas des objets.
+        NOTE:
+        - "sentiment.score": 0 (Panique Totale) à 100 (Euphorie Totale). 50 = Neutre.
+        - "playerProps": Trouve 3 cotes joueurs intéressantes.
     `;
 
     return withRetry(async () => {
         const response = await ai.models.generateContent({
-            // On garde GEMINI 3 PRO pour l'intelligence
             model: "gemini-3-pro-preview", 
             contents: judgePrompt,
             config: { tools: [{ googleSearch: {} }] }
         });
 
         const rawJson = cleanAndParseJSON(response.text || "{}");
-        
-        // Nettoyage et transformation des strings en objets pour l'UI
         const safeData = sanitizeData(rawJson);
 
         if (safeData.simulationInputs) safeData.monteCarlo = runMonteCarlo(safeData.simulationInputs, match.sport);
