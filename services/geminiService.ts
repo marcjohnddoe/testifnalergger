@@ -211,7 +211,7 @@ export const fetchDailyMatches = async (category: string = 'All'): Promise<Match
     });
 };
 
-// --- ANALYSE DEEP (FIX SCORE LIVE) ---
+// --- ANALYSE DEEP (OPTIMISÉE LIVE) ---
 export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> => {
     const ai = getClient();
     const isLiveMatch = match.status === 'live';
@@ -220,35 +220,48 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
         ? `INFO: Cote actuelle ${match.quickOdds}.` 
         : `INFO: Aucune cote trouvée.`;
 
-    // INSTRUCTION ANTI-HALLUCINATION SCORE
+    // 1. DÉFINITION INTELLIGENTE DU CONTEXTE DE RECHERCHE
+    let searchQueries = "";
+    
+    if (isLiveMatch) {
+        // MODE LIVE : On cherche UNIQUEMENT les faits de jeu. Pas de stats historiques.
+        // On utilise match.league pour être précis (ex: "Euroleague score live" au lieu de "NBA score live")
+        const sportTerm = match.sport === SportType.BASKETBALL ? "basketball" : "football";
+        searchQueries = `"${match.league} ${match.homeTeam} vs ${match.awayTeam} live score" "${match.homeTeam} ${match.awayTeam} box score stats"`;
+    } else {
+        // MODE PRÉ-MATCH : On cherche les stats avancées
+        if (match.sport === SportType.BASKETBALL) {
+            searchQueries = `"NBA stats ${match.homeTeam} ${match.awayTeam} matchup" "Positive Residual schedule"`;
+        } else {
+            searchQueries = `"Stats ${match.homeTeam} ${match.awayTeam} understat xG" "Compo probables ${match.homeTeam}"`;
+        }
+    }
+
     const instructions = isLiveMatch 
         ? `URGENT LIVE: Match EN COURS.
-           ACTION: Cherche "Score en direct ${match.homeTeam} ${match.awayTeam}".
-           ⚠️ ATTENTION: Ne confonds PAS "Pronostic" (2-1) avec "Score Actuel" (0-0).
-           SI TU TROUVES UN PRONOSTIC MAIS PAS DE SCORE LIVE CONFIRMÉ, METS "0-0" ou "N/A" DANS LE SCORE. NE METS JAMAIS UN PRONOSTIC COMME SCORE.` 
-        : `PRÉ-MATCH: Cherche infos blessures, stats avancées.`;
-
-    const searchContext = match.sport === SportType.BASKETBALL 
-        ? `"NBA score live ${match.homeTeam} ${match.awayTeam}", "Positive Residual"` 
-        : `"Live score exact ${match.homeTeam} ${match.awayTeam} maintenant", "Understat xG"`;
+           ACTION: Trouve le SCORE EXACT et la MINUTE de jeu via Google Search.
+           ANALYSE: Regarde le "Box Score" (Tirs, Possession, Fautes) pour voir qui domine.
+           ⚠️ ATTENTION: Ne confonds pas les PRONOSTICS (ex: "Prono 2-1") avec le SCORE RÉEL. Si tu ne trouves pas de score live officiel, mets "N/A".` 
+        : `PRÉ-MATCH: Cherche les blessures confirmées, les stats avancées (Net Rating/xG) et les cotes.`;
 
     const judgePrompt = `
-        RÔLE: Analyste Quantitatif. MATCH: ${match.homeTeam} vs ${match.awayTeam}.
-        STATUT: ${isLiveMatch ? "EN DIRECT" : "A VENIR"}.
+        RÔLE: Analyste Quantitatif Sportif.
+        MATCH: ${match.homeTeam} vs ${match.awayTeam} (${match.league}).
+        STATUT: ${isLiveMatch ? "EN DIRECT 🔴" : "A VENIR 📅"}.
         LANGUE: FRANÇAIS.
         
         ${instructions}
         ${oddsContext}
 
-        ÉTAPE 1 (SEARCH): ${searchContext}.
-        ÉTAPE 2 (THINKING): "reasoning_trace". Vérifie doublement le score si Live.
-        ÉTAPE 3 (JSON): Rapport final.
+        ÉTAPE 1 (SEARCH): Recherche Google : ${searchQueries}.
+        ÉTAPE 2 (THINKING): Analyse la dynamique. Si Live, qui a le momentum ?
+        ÉTAPE 3 (JSON): Remplis le rapport.
 
         RÈGLES:
-        - DUEL: Trouve un duel de joueurs clé.
-        - SCORE LIVE: Si incertain, mets "". Ne jamais inventer.
+        - Si Live: Remplis OBLIGATOIREMENT "liveScore" (ex: "88-82") et "matchMinute" (ex: "QT4 5:30").
+        - Si Live: "liveStrategy" doit donner un conseil immédiat (ex: "L'écart se réduit, parier sur le favori maintenant").
 
-        FORMAT JSON:
+        FORMAT JSON STRICT:
         {
             "reasoning_trace": "...",
             "matchId": "${match.id}",
@@ -264,15 +277,15 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
 
     return withRetry(async () => {
         const response = await ai.models.generateContent({
-            model: "gemini-3-pro-preview",
+            // On utilise le modèle Pro pour la qualité, mais assurez-vous qu'il est disponible. 
+            // Si c'est trop lent, passez à "gemini-2.0-flash-exp"
+            model: "gemini-3-pro-preview", 
             contents: judgePrompt,
             config: { tools: [{ googleSearch: {} }] }
         });
 
         const rawJson = cleanAndParseJSON(response.text || "{}");
-        // Cast to MatchAnalysis to avoid "Property 'monteCarlo' does not exist" error,
-        // as monteCarlo is not in the Zod schema but is present in the MatchAnalysis interface.
-        const verifiedData = AnalysisSchema.parse(rawJson) as MatchAnalysis;
+        const verifiedData = AnalysisSchema.parse(rawJson) as MatchAnalysis; // Cast pour éviter l'erreur TS sur monteCarlo
 
         if (verifiedData.simulationInputs) verifiedData.monteCarlo = runMonteCarlo(verifiedData.simulationInputs, match.sport);
         verifiedData.matchId = match.id;
@@ -281,5 +294,5 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
             supabase!.from('match_analyses').upsert({ match_id: match.id, analysis: verifiedData, updated_at: new Date().toISOString() }, { onConflict: 'match_id' }).then(() => {});
         }
         return verifiedData as MatchAnalysis;
-    }, 2);
+    }, 2); // 2 Retries max
 };
