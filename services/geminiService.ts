@@ -4,11 +4,26 @@ import { Match, MatchAnalysis, SportType } from "../types";
 import { supabase, isSupabaseConfigured } from "../lib/supabase";
 import { runMonteCarlo } from "./simulationService";
 
+// --- UTILITAIRE ENV (Pour lire les clés Cloud Run) ---
+const getEnv = (key: string) => {
+  if (typeof window !== 'undefined' && (window as any).__ENV__ && (window as any).__ENV__[key]) return (window as any).__ENV__[key];
+  if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key]) return (import.meta as any).env[key];
+  if (typeof process !== 'undefined' && process.env && process.env[key]) return process.env[key];
+  return '';
+};
+
+// --- CONFIG ---
 const getClient = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) throw new Error("API Key missing");
+  const apiKey = getEnv('API_KEY'); // Utilise le helper robuste
+  if (!apiKey) {
+      console.error("API KEY MANQUANTE ! Vérifiez Cloud Run.");
+      throw new Error("API Key missing");
+  }
   return new GoogleGenAI({ apiKey });
 };
+
+// Clé API SPORTS (API-Football)
+const RAPID_API_KEY = getEnv('RAPID_API_KEY');
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
     try {

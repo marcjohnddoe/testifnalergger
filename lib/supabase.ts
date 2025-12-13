@@ -1,12 +1,18 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Grâce à la config Vite mise à jour, process.env fonctionne maintenant dans le navigateur
-// pour les clés définies dans le fichier vite.config.ts
+// Fonction qui cherche les variables partout (Cloud Run > Build > Local)
 const getEnv = (key: string) => {
-  // Supporte import.meta.env (Standard Vite) OU process.env (Polyfill)
+  // 1. Priorité : Injection Cloud Run (Runtime) via server.js
+  if (typeof window !== 'undefined' && (window as any).__ENV__ && (window as any).__ENV__[key]) {
+    return (window as any).__ENV__[key];
+  }
+  
+  // 2. Fallback : Vite Build (Local / Dev)
   if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key]) {
     return (import.meta as any).env[key];
   }
+
+  // 3. Fallback : Process (Node)
   if (typeof process !== 'undefined' && process.env && process.env[key]) {
     return process.env[key];
   }
