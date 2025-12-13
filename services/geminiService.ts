@@ -42,27 +42,43 @@ const getParisDateParts = (offsetDays = 0) => {
 
 const getCurrentParisTime = () => new Date().toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' });
 
-// GÉNÉRATEUR D'ID UNIVERSEL (ID ROBUSTE)
-// Transforme "L.A. Lakers " en "lalakers" et "Paris SG" en "parissg"
-// Cela garantit que l'ID est identique quel que soit le format de la source ou le fuseau horaire
 const generateMatchId = (home: string, away: string) => {
-    const normalize = (str: string) => str.toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Enlève les accents
-        .replace(/[^a-z0-9]/g, ""); // Enlève tout sauf lettres et chiffres
+    const normalize = (str: string) => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
     return `${normalize(home)}-${normalize(away)}`;
+};
+
+const isMatchExpired = (dateStr?: string, timeStr?: string): boolean => {
+    if (!dateStr || !timeStr) return false;
+    const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Paris"}));
+    const [day, month] = dateStr.split('/').map(Number);
+    const cleanTime = timeStr.replace('h', ':');
+    const [hour, minute] = cleanTime.split(':').map(Number);
+    if (!day || !month) return false;
+    const matchDate = new Date(now.getFullYear(), month - 1, day, hour || 0, minute || 0);
+    if (month === 1 && now.getMonth() === 11) matchDate.setFullYear(now.getFullYear() + 1);
+    if (month === 12 && now.getMonth() === 0) matchDate.setFullYear(now.getFullYear() - 1);
+    return now > new Date(matchDate.getTime() + (300 * 60 * 1000));
+};
+
+const isLive = (dateStr?: string, timeStr?: string): boolean => {
+    if (!dateStr || !timeStr) return false;
+    const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Paris"}));
+    const cleanTime = timeStr.replace('h', ':');
+    const [h, m] = cleanTime.split(':').map(Number);
+    if (isNaN(h)) return false;
+    const matchTime = h * 60 + m;
+    const nowTime = now.getHours() * 60 + now.getMinutes();
+    const { displayDate: todayShort } = getParisDateParts(0);
+    if (dateStr === todayShort && nowTime >= matchTime && nowTime < matchTime + 240) return true;
+    return false;
 };
 
 const cleanAndParseJSON = (text: string) => {
     try {
         let cleanText = text.replace(/```json\n/g, "").replace(/```/g, "").trim();
         const firstBrace = cleanText.indexOf('{');
-        const firstBracket = cleanText.indexOf('[');
-        const start = (firstBrace === -1) ? firstBracket : (firstBracket === -1) ? firstBrace : Math.min(firstBrace, firstBracket);
         const lastBrace = cleanText.lastIndexOf('}');
-        const lastBracket = cleanText.lastIndexOf(']');
-        const end = Math.max(lastBrace, lastBracket);
-        
-        if (start !== -1 && end !== -1) cleanText = cleanText.substring(start, end + 1);
+        if (firstBrace !== -1 && lastBrace !== -1) cleanText = cleanText.substring(firstBrace, lastBrace + 1);
         return JSON.parse(cleanText);
     } catch (e) { return {}; }
 };
@@ -70,6 +86,9 @@ const cleanAndParseJSON = (text: string) => {
 const sanitizeData = (data: any) => {
     if (!data) return {};
     
+    // Si reasoning_trace manque (ancien modèle), on met un défaut
+    if (!data.reasoning_trace) data.reasoning_trace = "Analyse directe.";
+
     if (Array.isArray(data.scenarios)) {
         data.scenarios = data.scenarios.map((s: any) => {
             if (typeof s === 'string') {
@@ -177,7 +196,7 @@ async function fetchFromGeminiScraper(category: string): Promise<Match[]> {
     const { displayDate: tomorrowShort } = getParisDateParts(1);
     const currentTime = getCurrentParisTime();
     
-    let promptContext = category.includes('Basket') ? `FOCUS: NBA.` : `FOCUS: Top Matchs.`
+    let promptContext = category.includes('Basket') ? `FOCUS: NBA.` : `FOCUS: Top Matchs.`;
     let searchQuery = category.includes('Basket') 
         ? `"NBA schedule ${todayShort}" "NBA schedule ${tomorrowShort}"` 
         : `"Matchs ce soir ${todayShort}"`;
@@ -209,7 +228,7 @@ async function fetchFromGeminiScraper(category: string): Promise<Match[]> {
     });
 }
 
-// --- ANALYSE DEEP (NIVEAU CIA / INSIDER) ---
+// --- ANALYSE DEEP (CHAIN OF THOUGHT INTEGRATED) ---
 export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> => {
     
     // 1. CACHE CHECK
@@ -229,64 +248,60 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
     const isLiveMatch = match.status === 'live';
     const { full: currentDate } = getParisDateParts(0);
 
-    // --- CONSTRUCTION DU SPECTRE DE RECHERCHE (INSIDER SOURCES) ---
+    // --- STRATÉGIE DE RECHERCHE "INSIDER" ---
     const base = `${match.homeTeam} vs ${match.awayTeam}`;
     
-    // SOURCES EXPERTES SELON LE SPORT
     let qInsider = "";
     if (match.sport === SportType.BASKETBALL) {
-        // NBA : On vise les stats avancées qui filtrent le "garbage time" et le tracking des joueurs
-        qInsider = `"${base}" Cleaning the Glass stats "garbage time" lineup data Second Spectrum tracking official injury report ${currentDate}`;
+        qInsider = `"${base}" Cleaning the Glass stats "garbage time" lineups official injury report ${currentDate} referee stats`;
     } else {
-        // FOOT : On vise les Expected Goals (xG) détaillés et les notes tactiques
-        qInsider = `"${base}" Understat xG fbref advanced stats Whoscored match preview ${currentDate} conférence de presse coach`;
+        qInsider = `"${base}" Understat xG fbref advanced stats Whoscored preview ${currentDate} compo probable`;
     }
+    const qMarket = `"${base}" dropping odds sharp money trends betting percentages`;
+    const qSocial = `"${match.homeTeam}" twitter beat writers rumors locker room`;
 
-    // Bloc Marché : On cherche l'argent "intelligent" (Sharp Money)
-    const qMarket = `"${base}" odds movement pinnacle sharp money trends public betting percentage`;
-
-    // Bloc Social : On scanne les beat writers locaux
-    const qSocial = `"${match.homeTeam}" twitter beat writers rumors locker room atmosphere`;
-
-    // Assemblage de la "Mega Requête CIA"
-    const searchQueries = `${qInsider} ${qMarket} ${qSocial} ${isLiveMatch ? "live stats score" : ""}`;
-
-    const sportContext = match.sport === SportType.BASKETBALL 
-        ? "Basket NBA (Règles: Pace, Efficiency, Matchups défensifs)" 
-        : "Football (Règles: xG, Possession zones dangereuses, Pressing)";
+    const searchQueries = `${qInsider} ${qMarket} ${qSocial} ${isLiveMatch ? "live score stats" : ""}`;
+    const sportContext = match.sport === SportType.BASKETBALL ? "Basket NBA" : "Football";
 
     const judgePrompt = `
         RÔLE: Analyste Sportif de Niveau Élite (Ex-Bettor Pro & Data Scientist).
         SPORT: ${sportContext}. MATCH: ${base}.
-        STATUT: ${isLiveMatch ? "LIVE" : "PRÉ-MATCH"}.
+        DATE: ${currentDate}. STATUT: ${isLiveMatch ? "LIVE" : "PRÉ-MATCH"}.
         
-        MISSION: Analyse INSIDER. Ne me donne pas de généralités. Je veux des faits introuvables par le grand public.
-        RECHERCHE CIBLÉE: ${searchQueries}
+        MISSION: Analyse INSIDER. Ne me donne pas de généralités.
+        RECHERCHE EFFECTUÉE: ${searchQueries}
 
-        INSTRUCTIONS DE RIGUEUR (TOLÉRANCE ZÉRO):
-        1. **SOURCES OFFICIELLES**: Si tu parles de blessure, c'est que tu as lu le rapport officiel. Interdiction de dire "Incertain" si le joueur est confirmé OUT.
-        2. **STATS AVANCÉES**: Utilise "Offensive Rating", "Effective FG%", "xG", "PPDA". Bannis les termes vagues comme "bonne forme".
-        3. **ARBITRAGE**: Si l'arbitre a une tendance (ex: siffle beaucoup de fautes), intègre-le dans l'analyse (Impact sur Over/Under).
-        4. **VALUE BET**: Cherche l'erreur du bookmaker. Où est la value mathématique ?
+        === PROCESSUS DE RAISONNEMENT OBLIGATOIRE (CHAIN OF THOUGHT) ===
+        Avant de remplir le JSON, tu dois RÉFLÉCHIR étape par étape dans le champ "reasoning_trace" :
+        1. **Check Médical** : Qui est OUT ? Impact réel sur l'attaque/défense ?
+        2. **Check Tactique** : Pace du match ? Matchup clé (ex: pivot dominant vs défense faible) ?
+        3. **Check Marché** : Les cotes sont-elles logiques ? Où est la value mathématique ?
+        4. **Ajustement Simulation** : Si un joueur clé est out, comment modifier les inputs de simulation (homeAttack, tempo...) ?
+
+        INSTRUCTIONS DE RIGUEUR:
+        - Si un joueur clé est absent, BAISSE les notes dans "simulationInputs" (ex: homeAttack 70 -> 55).
+        - Si l'arbitre siffle beaucoup, augmente la probabilité de "Over" ou "Fautes".
+        - Pour "playerProps", cherche des "incohérences" (ex: ligne trop basse pour un joueur qui remplace une star).
 
         FORMAT JSON STRICT:
         {
             "matchId": "${match.id}",
-            "summary": "Synthèse brutale et directe. (ex: 'Le marché surestime les Lakers sans Davis').",
+            "reasoning_trace": "Etape 1: Blessures... Etape 2: Tactique... Etape 3: Conclusion Value...",
+            "summary": "Synthèse brutale et directe.",
             "predictions": [
-                { "betType": "Principal", "selection": "...", "odds": 0, "confidence": 0, "units": 0, "reasoning": "Preuve chiffrée (ex: Net Rtg +15 à domicile)." },
-                { "betType": "Value / Contrarian", "selection": "...", "odds": 0, "confidence": 0, "units": 0, "reasoning": "Le public est sur l'inverse à 80%..." },
-                { "betType": "Statistique", "selection": "...", "odds": 0, "confidence": 0, "units": 0, "reasoning": "Basé sur le Pace (98 possessions/match)." }
+                { "betType": "Principal", "selection": "...", "odds": 0, "confidence": 0, "units": 0, "reasoning": "..." },
+                { "betType": "Value", "selection": "...", "odds": 0, "confidence": 0, "units": 0, "reasoning": "..." },
+                { "betType": "Statistique", "selection": "...", "odds": 0, "confidence": 0, "units": 0, "reasoning": "..." }
             ],
             "playerProps": [
                 { "player": "...", "market": "...", "line": "...", "odds": 0, "confidence": 0 },
                 { "player": "...", "market": "...", "line": "...", "odds": 0, "confidence": 0 },
                 { "player": "...", "market": "...", "line": "...", "odds": 0, "confidence": 0 }
             ],
-            "injuries": [ { "player": "...", "status": "...", "impact": "High/Critical" } ],
+            "injuries": [ { "player": "...", "status": "...", "impact": "High/Med" } ],
             "keyDuel": { "player1": "...", "player2": "...", "statLabel": "...", "value1": 0, "value2": 0, "winner": "player1" },
-            "scenarios": ["Si le rythme dépasse 100 poss...", "Si l'arbitre siffle vite..."],
-            "advancedStats": [{ "label": "OffRtg / xG", "homeValue": 0, "awayValue": 0, "advantage": "home" }],
+            "scenarios": ["Si...", "Alors..."],
+            "advancedStats": [{ "label": "Pace/xG", "homeValue": 0, "awayValue": 0, "advantage": "home" }],
             "simulationInputs": { "homeAttack": 50, "homeDefense": 50, "awayAttack": 50, "awayDefense": 50, "tempo": 50 },
             "liveStrategy": { "triggerTime": "...", "condition": "...", "action": "...", "targetOdds": 0, "rationale": "..." },
             "sentiment": { "score": 50, "label": "Neutre", "summary": "..." }
@@ -299,12 +314,8 @@ export const analyzeMatchDeeply = async (match: Match): Promise<MatchAnalysis> =
             contents: judgePrompt,
             config: { 
                 tools: [{ googleSearch: {} }],
-                // STABILITÉ MAXIMALE : On tue la créativité pour la logique pure.
-                generationConfig: { 
-                    temperature: 0.1,
-                    topK: 40,
-                    topP: 0.95 
-                } 
+                // Température basse + TopK restreint = Analyse chirurgicale
+                generationConfig: { temperature: 0.1, topK: 40 } 
             }
         });
 
